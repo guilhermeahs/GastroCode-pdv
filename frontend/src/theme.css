@@ -1,0 +1,74 @@
+@import url("https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@500;700&display=swap");
+
+:root {
+  --font-body: "Nunito Sans", "DejaVu Sans", "Verdana", sans-serif;
+  --font-heading: "Sora", "Trebuchet MS", sans-serif;
+  --font-mono: "JetBrains Mono", "Consolas", monospace;
+  --scrollbar-track: #0f1430;
+  --scrollbar-thumb: linear-gradient(180deg, #376bf5 0%, #2146ba 100%);
+  --scrollbar-thumb-border: #7ba0ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+html {
+  font-size: clamp(14px, 0.75vw + 10px, 17px);
+  scrollbar-color: #376bf5 #0f1430;
+  scrollbar-width: thin;
+}
+
+body {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.35;
+  background: #0b0b0b;
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid var(--scrollbar-thumb-border);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  filter: brightness(1.08);
+}

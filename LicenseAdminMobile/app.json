@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Hadassa License Mobile",
+    "slug": "hadassa-license-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.hadassa.licensemobile",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#0b1021"
+      }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

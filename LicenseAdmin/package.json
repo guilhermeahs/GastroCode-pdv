@@ -1,0 +1,50 @@
+{
+  "name": "hadassa-license-admin",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "description": "Gerador offline de licencas assinadas para o PDV Hadassa",
+  "author": "Hadassa Beer",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder --win nsis",
+    "build:dir": "electron-builder --win dir"
+  },
+  "devDependencies": {
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.hadassa.licenseadmin",
+    "productName": "Hadassa License Admin",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "renderer/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "Hadassa License Admin Setup ${version}.${ext}"
+    }
+  }
+}

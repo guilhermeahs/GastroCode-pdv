@@ -1,0 +1,106 @@
+{
+  "name": "gastrocode-brasil-pdv",
+  "version": "1.0.16",
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev:api": "node server.js",
+    "dev:web": "npm --prefix frontend run dev",
+    "dev": "cmd /c scripts\\dev.cmd",
+    "rebuild:electron": "npx @electron/rebuild -f -w better-sqlite3 -v 35.7.5",
+    "dev:desktop": "npm run rebuild:electron && concurrently -k \"npm run dev:api\" \"npm --prefix frontend run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "desktop": "npm run build:web && electron .",
+    "build:web": "npm --prefix frontend run build",
+    "build:desktop": "npm run build:web && npm run rebuild:electron && electron-builder --win nsis --config electron-builder.config.cjs && node scripts/postbuild-desktop.js",
+    "build:desktop:publish": "npm run build:web && npm run rebuild:electron && electron-builder --win nsis --config electron-builder.config.cjs --publish always && node scripts/postbuild-desktop.js",
+    "publish:github": "powershell -ExecutionPolicy Bypass -File scripts/publish-github.ps1",
+    "license:init": "node scripts/license/init-keys.js",
+    "license:generate": "node scripts/license/generate-license.js",
+    "license:verify": "node scripts/license/verify-token.js",
+    "license-admin:dev": "npm --prefix LicenseAdmin run dev",
+    "license-admin:build": "npm --prefix LicenseAdmin run build"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.5",
+    "electron-updater": "^6.3.9",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.1",
+    "rcedit": "^5.0.2",
+    "wait-on": "^8.0.5"
+  },
+  "build": {
+    "appId": "com.gastrocodebrasil.pdv",
+    "productName": "GastroCode Brasil PDV",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "server.js",
+      "backend/**/*",
+      "frontend/dist/**/*",
+      "electron/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "afterPack": "scripts/after-pack.js",
+    "win": {
+      "signAndEditExecutable": false,
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "GastroCode Brasil PDV",
+      "uninstallDisplayName": "GastroCode Brasil PDV",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "language": "1046",
+      "installerLanguages": [
+        "pt_BR"
+      ],
+      "artifactName": "GastroCode Brasil PDV Setup ${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://example.com/appgestaoloja/updates"
+      }
+    ]
+  },
+  "description": "PDV de gestao de mesas, comanda e caixa",
+  "author": "GastroCode Brasil"
+}

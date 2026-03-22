@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hadassa License Admin</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <h1>Hadassa License Admin</h1>
+        <p>Gerador offline de licencas assinadas para o PDV.</p>
+      </header>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>Status do cofre</h2>
+          <button id="btnRefreshStatus" class="btn btn-secondary" type="button">Atualizar</button>
+        </div>
+
+        <div id="statusBox" class="status-box">Carregando...</div>
+
+        <div class="grid two">
+          <div>
+            <label class="label" for="passphraseInit">Senha da chave privada</label>
+            <input id="passphraseInit" class="input" type="password" placeholder="Minimo 8 caracteres" />
+          </div>
+          <div>
+            <label class="label" for="passphraseInitConfirm">Confirmar senha</label>
+            <input id="passphraseInitConfirm" class="input" type="password" placeholder="Repita a senha" />
+          </div>
+        </div>
+
+        <label class="checkbox">
+          <input id="forceRecreateKeys" type="checkbox" />
+          Recriar chaves (substitui as antigas)
+        </label>
+
+        <div class="actions">
+          <button id="btnInitKeys" class="btn" type="button">Gerar chaves</button>
+          <button id="btnOpenVault" class="btn btn-secondary" type="button">Abrir pasta do cofre</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Emitir licenca</h2>
+        <div class="grid two">
+          <div>
+            <label class="label" for="customer">Cliente</label>
+            <input id="customer" class="input" type="text" placeholder="Nome da empresa/cliente" />
+          </div>
+          <div>
+            <label class="label" for="deviceId">Codigo do dispositivo</label>
+            <input id="deviceId" class="input mono" type="text" placeholder="PDV-1234ABCD5678EF90" />
+          </div>
+          <div>
+            <label class="label" for="plan">Plano</label>
+            <select id="plan" class="input">
+              <option value="DIAS">Dias (personalizado)</option>
+              <option value="SEMANAL">Semanal (7 dias)</option>
+              <option value="MENSAL" selected>Mensal (30 dias)</option>
+              <option value="TRIAL_3_DIAS">Trial (3 dias)</option>
+              <option value="PERMANENTE">Permanente</option>
+              <option value="DATA_FIXA">Data fixa</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="days">Validade em dias (0 = sem expiracao)</label>
+            <input id="days" class="input" type="number" min="0" max="3650" value="30" />
+          </div>
+          <div>
+            <label class="label" for="offlineDays">Tolerancia offline (dias)</label>
+            <input id="offlineDays" class="input" type="number" min="1" max="45" value="7" />
+            <small class="label">
+              Dias que o PDV pode ficar sem internet/sem revalidar antes de bloquear a licenca.
+            </small>
+          </div>
+          <div>
+            <label class="label" for="expiresAt">Ou data fixa de expiracao (opcional)</label>
+            <input id="expiresAt" class="input" type="datetime-local" />
+          </div>
+        </div>
+
+        <div>
+          <label class="label" for="signPassphrase">Senha da chave privada para assinar</label>
+          <input id="signPassphrase" class="input" type="password" placeholder="Senha usada na geracao das chaves" />
+        </div>
+
+        <div class="actions">
+          <button id="btnGenerateToken" class="btn" type="button">Gerar token de licenca</button>
+        </div>
+
+        <div>
+          <label class="label" for="tokenOutput">Token gerado</label>
+          <textarea id="tokenOutput" class="textarea mono" readonly placeholder="HB1.payload.assinatura"></textarea>
+          <div class="actions">
+            <button id="btnCopyToken" class="btn btn-secondary" type="button">Copiar token</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Exportar chave publica para o PDV</h2>
+        <label class="label" for="publicTargetPath">Caminho destino no projeto do PDV</label>
+        <input id="publicTargetPath" class="input mono" type="text" />
+        <div class="actions">
+          <button id="btnExportPublicKey" class="btn" type="button">Exportar chave publica</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>Ultimas licencas emitidas</h2>
+          <button id="btnRefreshIssued" class="btn btn-secondary" type="button">Atualizar lista</button>
+        </div>
+        <div id="issuedList" class="issued-list"></div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
