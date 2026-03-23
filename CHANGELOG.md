@@ -2,6 +2,15 @@
 
 Todas as mudancas importantes do app ficam registradas aqui.
 
+## [1.0.17] - 2026-03-23
+
+- Modulo Entregas/Motoboys com painel unico de lancamento de pedidos (codigo + motoboy + forma de pagamento).
+- Remocao dos campos repetidos dentro de cada card de motoboy para fluxo mais rapido e limpo.
+- Cada pedido de motoboy agora mostra forma de pagamento diretamente na lista.
+- Correcao de tela preta no modulo Entregas (import faltante do SelectField).
+- Ajuste no layout dos cards de motoboy para eliminar espacos vazios e esticamento incorreto.
+- Controle de caixa ampliado com resumo do caixa aberto: subtotal, taxa, total vendido, vendas, ticket medio e pagamentos por forma.
+
 ## [1.0.16] - 2026-03-22
 
 - Nova aba dedicada de Relatorios na topbar, separada do Financeiro.
