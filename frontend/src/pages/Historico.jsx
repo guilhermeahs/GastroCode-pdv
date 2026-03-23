@@ -3,6 +3,7 @@ import { useApp } from "../context/AppContext";
 import DatePickerField from "../components/DatePickerField";
 import SelectField from "../components/SelectField";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { formatDateTimePtBr } from "../utils/datetime";
 
 function moeda(valor) {
   return Number(valor || 0).toLocaleString("pt-BR", {
@@ -247,7 +248,7 @@ export default function Historico() {
             <div style={dadosCardGridStyle}>
               <div>
                 <small style={labelStyle}>Fechado em</small>
-                <div>{new Date(item.closed_at).toLocaleString("pt-BR")}</div>
+                <div>{formatDateTimePtBr(item.closed_at)}</div>
               </div>
 
               {item.garcom_nome_fechamento && (

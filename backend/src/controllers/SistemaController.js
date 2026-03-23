@@ -22,6 +22,8 @@ const limparTudoTx = db.transaction(() => {
       "itens_pedido",
       "pedidos",
       "produtos",
+      "motoboy_pedidos",
+      "motoboys",
       "mesas",
       "usuarios",
       "caixa_sessoes"
@@ -64,7 +66,7 @@ const restaurarBackupTx = db.transaction((backupData) => {
     throw new Error("Arquivo de backup invalido.");
   }
 
-  const tabelasOpcionais = new Set(["pedido_pagamentos"]);
+  const tabelasOpcionais = new Set(["pedido_pagamentos", "motoboys", "motoboy_pedidos"]);
   const faltando = BackupService.TABELAS_BACKUP.filter(
     (table) => !Array.isArray(tables[table]) && !tabelasOpcionais.has(table)
   );
@@ -82,6 +84,8 @@ const restaurarBackupTx = db.transaction((backupData) => {
     "transacoes",
     "pedido_pagamentos",
     "caixa_sessoes",
+    "motoboys",
+    "motoboy_pedidos",
     "usuarios",
     "caixa_movimentos",
     "user_sessoes",

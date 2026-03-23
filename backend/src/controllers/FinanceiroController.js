@@ -265,6 +265,26 @@ function obterResumoPeriodo(openedAtUtc) {
   };
 }
 
+function montarResumoCaixaAberto(sessao) {
+  if (!sessao) return null;
+  const resumoPeriodo = obterResumoPeriodo(sessao.opened_at);
+  const caixaPeriodo = resumoPeriodo?.caixa || {};
+
+  return {
+    periodo_inicio: sessao.opened_at,
+    periodo_fim: null,
+    caixa: {
+      faturamento_total: Number(caixaPeriodo.faturamento_total || 0),
+      subtotal_produtos: Number(caixaPeriodo.subtotal_produtos || 0),
+      taxa_servico_total: Number(caixaPeriodo.taxa_servico_total || 0),
+      vendas: Number(caixaPeriodo.vendas || 0)
+    },
+    faturamentoPorForma: Array.isArray(resumoPeriodo?.faturamentoPorForma)
+      ? resumoPeriodo.faturamentoPorForma
+      : []
+  };
+}
+
 function obterDataLocalHojeIso() {
   return db.prepare("SELECT DATE('now', 'localtime') AS data").get().data;
 }
@@ -1192,10 +1212,14 @@ const movimentarCaixaTx = db.transaction((payload, authUser) => {
     String(authUser?.nome || "Sistema").slice(0, 90)
   );
 
+  const sessaoAtualizada = caixaByIdStmt.get(sessao.id);
+  const resumoCaixaAberto = montarResumoCaixaAberto(sessaoAtualizada);
+
   return {
-    sessao: caixaByIdStmt.get(sessao.id),
+    sessao: sessaoAtualizada,
     movimentos: listarMovimentosSessaoStmt.all(sessao.id),
-    resumo_saldo: montarResumoSaldo(sessao, 0)
+    resumo_saldo: montarResumoSaldo(sessaoAtualizada, resumoCaixaAberto?.caixa?.faturamento_total || 0),
+    resumo_caixa_aberto: resumoCaixaAberto
   };
 });
 
@@ -1215,14 +1239,18 @@ const FinanceiroController = {
       const aberta = caixaAbertoStmt.get() || null;
       const ultima = aberta ? null : ultimaSessaoFechadaStmt.get() || null;
       const movimentos = aberta ? listarMovimentosSessaoStmt.all(aberta.id) : [];
-      const resumoSaldo = aberta ? montarResumoSaldo(aberta, 0) : null;
+      const resumoCaixaAberto = aberta ? montarResumoCaixaAberto(aberta) : null;
+      const resumoSaldo = aberta
+        ? montarResumoSaldo(aberta, resumoCaixaAberto?.caixa?.faturamento_total || 0)
+        : null;
 
       res.json({
         aberto: Boolean(aberta),
         sessao: aberta,
         ultima_sessao: ultima,
         movimentos,
-        resumo_saldo: resumoSaldo
+        resumo_saldo: resumoSaldo,
+        resumo_caixa_aberto: resumoCaixaAberto
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1260,12 +1288,15 @@ const FinanceiroController = {
         String(req.authUser?.nome || "Sistema").slice(0, 90)
       );
 
+      const resumoCaixaAberto = montarResumoCaixaAberto(sessao);
+
       return res.status(201).json({
         aberto: true,
         sessao,
         ultima_sessao: null,
         movimentos: listarMovimentosSessaoStmt.all(sessao.id),
-        resumo_saldo: montarResumoSaldo(sessao, 0)
+        resumo_saldo: montarResumoSaldo(sessao, resumoCaixaAberto?.caixa?.faturamento_total || 0),
+        resumo_caixa_aberto: resumoCaixaAberto
       });
     } catch (error) {
       return res.status(500).json({ error: error.message });

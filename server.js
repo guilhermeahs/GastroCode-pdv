@@ -10,6 +10,7 @@ const financeiroRoutes = require("./backend/src/routes/financeiroRoutes");
 const authRoutes = require("./backend/src/routes/authRoutes");
 const sistemaRoutes = require("./backend/src/routes/sistemaRoutes");
 const licencaRoutes = require("./backend/src/routes/licencaRoutes");
+const entregasRoutes = require("./backend/src/routes/entregasRoutes");
 const auditTrailMiddleware = require("./backend/src/middleware/auditTrail");
 
 const app = express();
@@ -27,6 +28,7 @@ app.use("/api", licencaRoutes);
 app.use("/api", mesasRoutes);
 app.use("/api", financeiroRoutes);
 app.use("/api", sistemaRoutes);
+app.use("/api", entregasRoutes);
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";

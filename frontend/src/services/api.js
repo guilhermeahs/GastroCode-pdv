@@ -158,6 +158,52 @@ export const api = {
       role
     ),
   getCaixa: (role) => request("/api/financeiro/caixa", {}, role),
+  getEntregasMotoboys: (role, query = "") =>
+    request(`/api/entregas/motoboys${queryString({ q: query })}`, {}, role),
+  getEntregasResumo: (role) => request("/api/entregas/resumo", {}, role),
+  criarEntregasMotoboy: (body, role) =>
+    request(
+      "/api/entregas/motoboys",
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  atualizarEntregasMotoboy: (id, body, role) =>
+    request(
+      `/api/entregas/motoboys/${id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  excluirEntregasMotoboy: (id, role) =>
+    request(
+      `/api/entregas/motoboys/${id}`,
+      {
+        method: "DELETE"
+      },
+      role
+    ),
+  adicionarEntregasPedidosLote: (motoboyId, body, role) =>
+    request(
+      `/api/entregas/motoboys/${motoboyId}/pedidos/lote`,
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  removerEntregasPedido: (pedidoId, role) =>
+    request(
+      `/api/entregas/pedidos/${pedidoId}`,
+      {
+        method: "DELETE"
+      },
+      role
+    ),
 
   criarMesa: (body, role) =>
     request(

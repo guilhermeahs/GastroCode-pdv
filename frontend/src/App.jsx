@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AppProvider, useApp } from "./context/AppContext";
 import PainelMesas from "./pages/PainelMesas";
+import Entregas from "./pages/Entregas";
 import Financeiro from "./pages/Financeiro";
 import Relatorios from "./pages/Relatorios";
 import Historico from "./pages/Historico";
@@ -9,6 +10,7 @@ import Impressao from "./pages/Impressao";
 import SelectField from "./components/SelectField";
 import { api } from "./services/api";
 import { getReleaseName, getReleaseNotesForVersion, getReleaseNotesTimeline } from "./data/releaseNotes";
+import { formatDateTimePtBr } from "./utils/datetime";
 
 const CONTATO_RENOVACAO = "5531995172257";
 const APP_NOME_PADRAO = "GastroCode Brasil PDV";
@@ -28,7 +30,7 @@ function montarLinkRenovacao(licencaInfo) {
 
   if (licencaInfo?.licenca?.expira_em) {
     linhas.push(
-      `Expira em: ${new Date(licencaInfo.licenca.expira_em).toLocaleString("pt-BR")}`
+      `Expira em: ${formatDateTimePtBr(licencaInfo.licenca.expira_em)}`
     );
   }
 
@@ -415,6 +417,7 @@ function Layout() {
   const nomeLoja = String(configuracoes?.estabelecimento_nome || "").trim();
   const tituloTopo = nomeLoja || APP_NOME_PADRAO;
   const podeVerMesas = hasPermission("APP_MESAS_VER");
+  const podeVerEntregas = hasPermission("APP_ENTREGAS_VER");
   const podeVerHistorico = hasPermission("APP_HISTORICO_VER");
   const podeVerImpressao = hasPermission("APP_IMPRESSAO");
   const podeVerConfiguracoes = hasPermission("APP_CONFIG_VER");
@@ -437,6 +440,7 @@ function Layout() {
   useEffect(() => {
     const permitidas = [];
     if (podeVerMesas) permitidas.push("mesas");
+    if (podeVerEntregas) permitidas.push("entregas");
     if (podeVerFinanceiro) permitidas.push("financeiro");
     if (podeVerRelatorios) permitidas.push("relatorios");
     if (podeVerHistorico) permitidas.push("historico");
@@ -450,6 +454,7 @@ function Layout() {
   }, [
     pagina,
     podeVerMesas,
+    podeVerEntregas,
     podeVerFinanceiro,
     podeVerRelatorios,
     podeVerHistorico,
@@ -633,6 +638,12 @@ function Layout() {
               </button>
             )}
 
+            {podeVerEntregas && (
+              <button onClick={() => setPagina("entregas")} style={navButton(pagina === "entregas")}>
+                Entregas
+              </button>
+            )}
+
             {podeVerFinanceiro && (
               <button onClick={() => setPagina("financeiro")} style={navButton(pagina === "financeiro")}>
                 Financeiro
@@ -722,6 +733,7 @@ function Layout() {
       {showLoadingHint && <LoadingPill />}
 
       {pagina === "mesas" && podeVerMesas && <PainelMesas />}
+      {pagina === "entregas" && podeVerEntregas && <Entregas />}
       {pagina === "financeiro" && podeVerFinanceiro && <Financeiro />}
       {pagina === "relatorios" && podeVerRelatorios && <Relatorios />}
       {pagina === "historico" && podeVerHistorico && <Historico />}

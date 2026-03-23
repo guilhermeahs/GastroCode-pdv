@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import SelectField from "../components/SelectField";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { useApp } from "../context/AppContext";
+import { formatDateTimePtBr } from "../utils/datetime";
 
 const ROLE_OPTIONS = [
   { value: "GARCOM", label: "Garcom" },
@@ -34,10 +35,7 @@ function formatarBytes(bytes) {
 }
 
 function formatarDataHora(valor) {
-  if (!valor) return "-";
-  const data = new Date(valor);
-  if (Number.isNaN(data.getTime())) return "-";
-  return data.toLocaleString("pt-BR");
+  return formatDateTimePtBr(valor);
 }
 
 function apenasDigitos(valor) {
@@ -668,7 +666,7 @@ export default function Configuracoes() {
 
     if (licencaInfo?.licenca?.expira_em) {
       linhas.push(
-        `Expira em: ${new Date(licencaInfo.licenca.expira_em).toLocaleString("pt-BR")}`
+        `Expira em: ${formatDateTimePtBr(licencaInfo.licenca.expira_em)}`
       );
     }
 
@@ -737,7 +735,7 @@ export default function Configuracoes() {
           <div>
             Expira em:{" "}
             {licencaInfo?.licenca?.expira_em
-              ? new Date(licencaInfo.licenca.expira_em).toLocaleString("pt-BR")
+              ? formatDateTimePtBr(licencaInfo.licenca.expira_em)
               : "-"}
           </div>
           <div>Plano: {licencaInfo?.licenca?.plano || "-"}</div>
@@ -1579,7 +1577,7 @@ export default function Configuracoes() {
             <div key={log.id} style={auditItemStyle}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                 <strong>{log.acao}</strong>
-                <span>{new Date(log.created_at).toLocaleString("pt-BR")}</span>
+                <span>{formatDateTimePtBr(log.created_at)}</span>
               </div>
               <div style={{ color: "#b8c0db", fontSize: 13 }}>
                 {log.usuario_nome || "Sistema"} ({log.role || "N/A"}) - {log.rota || "-"} - {log.status_code || "-"}

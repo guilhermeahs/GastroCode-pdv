@@ -10,6 +10,8 @@ const CATALOGO_PERMISSOES = [
   { chave: "APP_PRODUTOS_ESTOQUE", label: "Ajustar estoque" },
   { chave: "APP_PRODUTOS_IMPORTAR", label: "Importar produtos em lote" },
   { chave: "APP_PRODUTOS_EXCLUIR", label: "Excluir produtos" },
+  { chave: "APP_ENTREGAS_VER", label: "Ver painel de entregas (motoboys)" },
+  { chave: "APP_ENTREGAS_GERIR", label: "Gerenciar motoboys e pedidos de entrega" },
   { chave: "APP_FINANCEIRO_VER", label: "Ver resumo financeiro" },
   { chave: "APP_FINANCEIRO_RELATORIOS", label: "Ver relatorios financeiros" },
   { chave: "APP_CAIXA_GERIR", label: "Abrir/fechar/movimentar caixa" },
@@ -49,6 +51,8 @@ function mapaPermissoesGarcom() {
     APP_MESAS_ABRIR_FECHAR: true,
     APP_MESAS_ITENS: true,
     APP_PRODUTOS_VER: true,
+    APP_ENTREGAS_VER: true,
+    APP_ENTREGAS_GERIR: true,
     APP_IMPRESSAO: true
   };
 }

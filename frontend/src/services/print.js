@@ -1,3 +1,5 @@
+import { formatDateTimePtBr } from "../utils/datetime";
+
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 const DEFAULT_PRINT_CONFIG = {
@@ -410,8 +412,8 @@ function montarTextoResumoCaixa(resumo, config) {
     linhas.push(`Gerado: ${new Date().toLocaleString("pt-BR")}`);
   }
 
-  if (resumo?.periodo_inicio) linhas.push(`Inicio: ${new Date(resumo.periodo_inicio).toLocaleString("pt-BR")}`);
-  if (resumo?.periodo_fim) linhas.push(`Fim: ${new Date(resumo.periodo_fim).toLocaleString("pt-BR")}`);
+  if (resumo?.periodo_inicio) linhas.push(`Inicio: ${formatDateTimePtBr(resumo.periodo_inicio)}`);
+  if (resumo?.periodo_fim) linhas.push(`Fim: ${formatDateTimePtBr(resumo.periodo_fim)}`);
   linhas.push("-".repeat(largura));
 
   linhas.push(linePair("Saldo inicial", moeda(resumo?.saldo_inicial), largura));
@@ -699,10 +701,10 @@ function htmlResumoCaixa(resumo, config) {
     .join("");
 
   const periodoInicio = resumoSeguro.periodo_inicio
-    ? new Date(resumoSeguro.periodo_inicio).toLocaleString("pt-BR")
+    ? formatDateTimePtBr(resumoSeguro.periodo_inicio)
     : "-";
   const periodoFim = resumoSeguro.periodo_fim
-    ? new Date(resumoSeguro.periodo_fim).toLocaleString("pt-BR")
+    ? formatDateTimePtBr(resumoSeguro.periodo_fim)
     : "-";
 
   return `

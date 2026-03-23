@@ -3,6 +3,7 @@ import { useApp } from "../context/AppContext";
 import { api } from "../services/api";
 import DatePickerField from "../components/DatePickerField";
 import SelectField from "../components/SelectField";
+import { formatDateTimePtBr } from "../utils/datetime";
 
 function moeda(valor) {
   return Number(valor || 0).toLocaleString("pt-BR", {
@@ -568,7 +569,7 @@ export default function Relatorios() {
           {periodo?.gerado_em ? (
             <>
               {" | "}Gerado em:{" "}
-              <strong>{new Date(periodo.gerado_em).toLocaleString("pt-BR")}</strong>
+              <strong>{formatDateTimePtBr(periodo.gerado_em)}</strong>
             </>
           ) : null}
         </div>

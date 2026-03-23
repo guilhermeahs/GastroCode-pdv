@@ -214,6 +214,32 @@ db.exec(`
     observacao TEXT,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS motoboys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    ativo INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS motoboy_pedidos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    motoboy_id INTEGER NOT NULL,
+    numero TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'DESCONHECIDO',
+    payment TEXT NOT NULL DEFAULT 'ONLINE',
+    data_iso TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (motoboy_id) REFERENCES motoboys(id) ON DELETE CASCADE
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_motoboy_pedido_unico_numero
+    ON motoboy_pedidos(motoboy_id, numero);
+  CREATE INDEX IF NOT EXISTS idx_motoboy_pedidos_data
+    ON motoboy_pedidos(data_iso);
+  CREATE INDEX IF NOT EXISTS idx_motoboys_nome
+    ON motoboys(nome);
 `);
 
 function ensureColumn(table, column, definition) {

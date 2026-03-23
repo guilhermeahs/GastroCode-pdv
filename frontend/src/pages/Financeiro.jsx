@@ -5,6 +5,7 @@ import { api } from "../services/api";
 import DatePickerField from "../components/DatePickerField";
 import SelectField from "../components/SelectField";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { formatDateTimePtBr } from "../utils/datetime";
 
 function moeda(valor) {
   return Number(valor || 0).toLocaleString("pt-BR", {
@@ -567,6 +568,24 @@ export default function Financeiro() {
     saldoContadoNumerico === null || !Number.isFinite(saldoContadoNumerico)
       ? null
       : Number((saldoContadoNumerico - saldoFinalEstimadoAtual).toFixed(2));
+  const resumoCaixaAberto = caixa?.resumo_caixa_aberto || null;
+  const faturamentoCaixaAberto = Number(resumoCaixaAberto?.caixa?.faturamento_total || 0);
+  const subtotalCaixaAberto = Number(resumoCaixaAberto?.caixa?.subtotal_produtos || 0);
+  const taxaServicoCaixaAberto = Number(resumoCaixaAberto?.caixa?.taxa_servico_total || 0);
+  const vendasCaixaAberto = Number(resumoCaixaAberto?.caixa?.vendas || 0);
+  const ticketMedioCaixaAberto =
+    vendasCaixaAberto > 0 ? Number((faturamentoCaixaAberto / vendasCaixaAberto).toFixed(2)) : 0;
+  const formasPagamentoCaixaAberto = useMemo(() => {
+    const lista = Array.isArray(resumoCaixaAberto?.faturamentoPorForma)
+      ? resumoCaixaAberto.faturamentoPorForma
+      : [];
+    return lista
+      .map((item) => ({
+        forma_pagamento: nomeFormaPagamento(item.forma_pagamento),
+        total: Number(item.total || 0)
+      }))
+      .filter((item) => item.total > 0);
+  }, [resumoCaixaAberto?.faturamentoPorForma]);
 
   async function handleCadastrarProduto(e) {
     e.preventDefault();
@@ -949,7 +968,7 @@ export default function Financeiro() {
         {caixa?.aberto && caixa?.sessao && (
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ color: "#83d6a9", fontWeight: 700 }}>Caixa aberto</div>
-            <div>Abertura: {new Date(caixa.sessao.opened_at).toLocaleString("pt-BR")}</div>
+                    <div>Abertura: {formatDateTimePtBr(caixa.sessao.opened_at)}</div>
             <div>Saldo inicial: {moeda(caixa.sessao.saldo_inicial)}</div>
 
             {caixa?.resumo_saldo && (
@@ -963,6 +982,48 @@ export default function Financeiro() {
                 <div style={{ fontWeight: 700, color: "#cde1ff" }}>
                   Saldo final estimado: {moeda(caixa.resumo_saldo.saldo_final_estimado)}
                 </div>
+              </div>
+            )}
+
+            {resumoCaixaAberto && (
+              <div style={resumoVendasCaixaBoxStyle}>
+                <strong style={{ fontSize: 16 }}>Resumo de vendas do caixa aberto</strong>
+                <div style={{ color: "#a7b6e4", fontSize: 13 }}>
+                  Periodo: {formatDateTimePtBr(resumoCaixaAberto.periodo_inicio)} ate agora
+                </div>
+                <div style={resumoVendasCaixaGridStyle}>
+                  <div style={resumoVendasItemStyle}>
+                    <small>Subtotal produtos</small>
+                    <strong>{moeda(subtotalCaixaAberto)}</strong>
+                  </div>
+                  <div style={resumoVendasItemStyle}>
+                    <small>Taxa de servico</small>
+                    <strong>{moeda(taxaServicoCaixaAberto)}</strong>
+                  </div>
+                  <div style={resumoVendasItemStyle}>
+                    <small>Total vendido</small>
+                    <strong>{moeda(faturamentoCaixaAberto)}</strong>
+                  </div>
+                  <div style={resumoVendasItemStyle}>
+                    <small>Vendas pagas</small>
+                    <strong>{vendasCaixaAberto}</strong>
+                  </div>
+                  <div style={resumoVendasItemStyle}>
+                    <small>Ticket medio</small>
+                    <strong>{moeda(ticketMedioCaixaAberto)}</strong>
+                  </div>
+                </div>
+                {formasPagamentoCaixaAberto.length > 0 ? (
+                  <div style={formasPagamentoWrapStyle}>
+                    {formasPagamentoCaixaAberto.map((item) => (
+                      <span key={item.forma_pagamento} style={formaPagamentoTagStyle}>
+                        {item.forma_pagamento}: {moeda(item.total)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: "#a7b6e4", fontSize: 12 }}>Sem pagamentos registrados ainda.</div>
+                )}
               </div>
             )}
 
@@ -1014,7 +1075,7 @@ export default function Financeiro() {
                         <span>{moeda(mov.valor)}</span>
                       </div>
                       <div style={{ color: "#b8c0db", fontSize: 13 }}>
-                        {new Date(mov.created_at).toLocaleString("pt-BR")} - {mov.usuario_nome || "Sistema"}
+                          {formatDateTimePtBr(mov.created_at)} - {mov.usuario_nome || "Sistema"}
                       </div>
                       <div style={{ color: "#d6ddfa", fontSize: 13 }}>
                         {mov.justificativa || "Sem justificativa"}
@@ -1104,7 +1165,7 @@ export default function Financeiro() {
 
             {caixa?.ultima_sessao && (
               <div style={ultimaSessaoStyle}>
-                Ultimo fechamento: {new Date(caixa.ultima_sessao.closed_at).toLocaleString("pt-BR")} -{" "}
+                    Ultimo fechamento: {formatDateTimePtBr(caixa.ultima_sessao.closed_at)} -{" "}
                 {moeda(caixa.ultima_sessao.total_vendas)}
               </div>
             )}
@@ -1237,8 +1298,8 @@ export default function Financeiro() {
         <div style={{ ...cardStyle, border: "1px solid #1f8a63", marginTop: 16 }}>
           <h3 style={{ marginTop: 0 }}>Resumo do fechamento do caixa</h3>
           <div style={resumoFechamentoGridStyle}>
-            <div>Periodo inicio: {new Date(resumoFechamento.periodo_inicio).toLocaleString("pt-BR")}</div>
-            <div>Periodo fim: {new Date(resumoFechamento.periodo_fim).toLocaleString("pt-BR")}</div>
+                      <div>Periodo inicio: {formatDateTimePtBr(resumoFechamento.periodo_inicio)}</div>
+                      <div>Periodo fim: {formatDateTimePtBr(resumoFechamento.periodo_fim)}</div>
             <div>Saldo inicial: {moeda(resumoFechamento.saldo_inicial)}</div>
             {resumoFechamento.saldo_contado !== null && resumoFechamento.saldo_contado !== undefined && (
               <div>Saldo contado: {moeda(resumoFechamento.saldo_contado)}</div>
@@ -1808,6 +1869,46 @@ const resumoMovimentosBoxStyle = {
   padding: 10,
   display: "grid",
   gap: 4
+};
+
+const resumoVendasCaixaBoxStyle = {
+  borderRadius: 12,
+  border: "1px solid #35598c",
+  background: "#121b34",
+  padding: 10,
+  display: "grid",
+  gap: 8
+};
+
+const resumoVendasCaixaGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+  gap: 8
+};
+
+const resumoVendasItemStyle = {
+  borderRadius: 10,
+  border: "1px solid #304675",
+  background: "#151f3e",
+  padding: "8px 10px",
+  display: "grid",
+  gap: 3
+};
+
+const formasPagamentoWrapStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6
+};
+
+const formaPagamentoTagStyle = {
+  borderRadius: 999,
+  border: "1px solid #2f6f58",
+  background: "#133325",
+  color: "#d6ffea",
+  fontSize: 12,
+  fontWeight: 700,
+  padding: "4px 10px"
 };
 
 const movimentosListaStyle = {

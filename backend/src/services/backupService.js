@@ -11,6 +11,8 @@ const TABELAS_BACKUP = [
   "transacoes",
   "pedido_pagamentos",
   "caixa_sessoes",
+  "motoboys",
+  "motoboy_pedidos",
   "usuarios",
   "caixa_movimentos",
   "user_sessoes",

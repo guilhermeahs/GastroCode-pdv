@@ -4,6 +4,7 @@ build/
 publicar/
 frontend/dist/
 
+LicenseAdmin/build/
 LicenseAdminMobile/.expo/
 LicenseAdminMobile/android/.gradle/
 LicenseAdminMobile/android/.kotlin/
