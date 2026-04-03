@@ -2,6 +2,12 @@
 
 Todas as mudancas importantes do app ficam registradas aqui.
 
+## [1.0.18] - 2026-04-03
+
+- Correcao no card de pedidos online para nao duplicar selo de cancelamento (mostra apenas um "Cancelado").
+- Ajuste de leitura de status iFood: `RECEIVED/PLACED/CREATED` agora aparece como "Recebido" (mais claro no fluxo).
+- Melhorias de consistencia visual na aba Online ao exibir status e badges de pedido.
+
 ## [1.0.17] - 2026-03-23
 
 - Modulo Entregas/Motoboys com painel unico de lancamento de pedidos (codigo + motoboy + forma de pagamento).

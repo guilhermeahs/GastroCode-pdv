@@ -12,11 +12,19 @@ const sistemaRoutes = require("./backend/src/routes/sistemaRoutes");
 const licencaRoutes = require("./backend/src/routes/licencaRoutes");
 const entregasRoutes = require("./backend/src/routes/entregasRoutes");
 const auditTrailMiddleware = require("./backend/src/middleware/auditTrail");
+const EntregasIntegracaoService = require("./backend/src/services/entregasIntegracaoService");
 
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(
+  express.json({
+    limit: "20mb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf && buf.length > 0 ? buf.toString("utf8") : "";
+    }
+  })
+);
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, message: "API online" });
@@ -34,6 +42,7 @@ const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";
 
 BackupService.iniciarAgendadorBackupAutomatico();
+EntregasIntegracaoService.iniciarAgendadorAutoSync();
 
 app.listen(PORT, HOST, () => {
   console.log(`Servidor rodando em http://${HOST}:${PORT}`);

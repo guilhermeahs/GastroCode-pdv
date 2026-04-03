@@ -36,6 +36,43 @@ function normalizarFiltroData(input) {
   return {};
 }
 
+function formatErrorPart(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+  if (Array.isArray(value)) {
+    const joined = value
+      .map((item) => formatErrorPart(item))
+      .filter(Boolean)
+      .join(" | ");
+    return joined.trim();
+  }
+
+  if (typeof value === "object") {
+    const preferred = [
+      value.message,
+      value.error,
+      value.detail,
+      value.description,
+      value.reason,
+      value.title
+    ]
+      .map((item) => formatErrorPart(item))
+      .filter(Boolean);
+    if (preferred.length > 0) return preferred.join(" | ");
+
+    try {
+      const json = JSON.stringify(value);
+      return json.length > 280 ? `${json.slice(0, 277)}...` : json;
+    } catch {
+      return "";
+    }
+  }
+
+  return "";
+}
+
 async function request(path, options = {}, role = "GERENTE") {
   const token = localStorage.getItem(AUTH_TOKEN_KEY) || "";
   const sensitivePin = String(options.sensitivePin || "").trim();
@@ -67,9 +104,8 @@ async function request(path, options = {}, role = "GERENTE") {
   }
 
   if (!response.ok) {
-    throw new Error(
-      (data && (data.error || data.message)) || `Erro na requisicao (${response.status}).`
-    );
+    const details = formatErrorPart(data?.error || data?.message || data);
+    throw new Error(details || `Erro na requisicao (${response.status}).`);
   }
 
   return data;
@@ -160,7 +196,59 @@ export const api = {
   getCaixa: (role) => request("/api/financeiro/caixa", {}, role),
   getEntregasMotoboys: (role, query = "") =>
     request(`/api/entregas/motoboys${queryString({ q: query })}`, {}, role),
+  getEntregasPendentes: (role, query = "") =>
+    request(`/api/entregas/pedidos-pendentes${queryString({ q: query })}`, {}, role),
   getEntregasResumo: (role) => request("/api/entregas/resumo", {}, role),
+  getEntregasIntegracoes: (role) => request("/api/entregas/integracoes", {}, role),
+  salvarEntregasIntegracao: (provider, body, role) =>
+    request(
+      `/api/entregas/integracoes/${provider}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  sincronizarEntregasIntegracao: (provider, body, role) =>
+    request(
+      `/api/entregas/integracoes/${provider}/sincronizar`,
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  getEntregasIfoodHomologacaoStatus: (role) =>
+    request("/api/entregas/integracoes/ifood/homologacao/status", {}, role),
+  salvarEntregasIfoodHomologacao: (body, role) =>
+    request(
+      "/api/entregas/integracoes/ifood/homologacao",
+      {
+        method: "PATCH",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  sincronizarEntregasIfoodHomologacao: (body, role) =>
+    request(
+      "/api/entregas/integracoes/ifood/homologacao/sincronizar",
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  getEntregasIfoodEventos: (role, limit = 80) =>
+    request(`/api/entregas/integracoes/ifood/homologacao/eventos${queryString({ limit })}`, {}, role),
+  renovarEntregasIfoodToken: (body, role) =>
+    request(
+      "/api/entregas/integracoes/ifood/homologacao/token",
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
   criarEntregasMotoboy: (body, role) =>
     request(
       "/api/entregas/motoboys",
@@ -201,6 +289,15 @@ export const api = {
       `/api/entregas/pedidos/${pedidoId}`,
       {
         method: "DELETE"
+      },
+      role
+    ),
+  atribuirEntregasPedido: (pedidoId, body, role) =>
+    request(
+      `/api/entregas/pedidos/${pedidoId}/atribuir`,
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
       },
       role
     ),

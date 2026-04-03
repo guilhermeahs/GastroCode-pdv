@@ -225,10 +225,13 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS motoboy_pedidos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    motoboy_id INTEGER NOT NULL,
+    motoboy_id INTEGER,
     numero TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'DESCONHECIDO',
     payment TEXT NOT NULL DEFAULT 'ONLINE',
+    external_id TEXT,
+    status TEXT NOT NULL DEFAULT 'RECEBIDO',
+    detalhes_json TEXT,
     data_iso TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (motoboy_id) REFERENCES motoboys(id) ON DELETE CASCADE
@@ -260,6 +263,62 @@ ensureColumn("pedidos", "garcom_nome_fechamento", "TEXT");
 ensureColumn("usuarios", "perfil_personalizado", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("usuarios", "perfil_nome", "TEXT");
 ensureColumn("usuarios", "permissoes_json", "TEXT");
+
+function ensureMotoboyPedidosAllowsNullMotoboy() {
+  const columns = db.prepare("PRAGMA table_info(motoboy_pedidos)").all();
+  const motoboyIdCol = columns.find((col) => String(col.name) === "motoboy_id");
+  if (!motoboyIdCol) return;
+  if (Number(motoboyIdCol.notnull || 0) === 0) return;
+
+  db.exec(`
+    DROP INDEX IF EXISTS idx_motoboy_pedido_unico_numero;
+    DROP INDEX IF EXISTS idx_motoboy_pedidos_data;
+
+    ALTER TABLE motoboy_pedidos RENAME TO motoboy_pedidos_old;
+
+    CREATE TABLE motoboy_pedidos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      motoboy_id INTEGER,
+      numero TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'DESCONHECIDO',
+      payment TEXT NOT NULL DEFAULT 'ONLINE',
+      external_id TEXT,
+      status TEXT NOT NULL DEFAULT 'RECEBIDO',
+      detalhes_json TEXT,
+      data_iso TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (motoboy_id) REFERENCES motoboys(id) ON DELETE CASCADE
+    );
+
+    INSERT INTO motoboy_pedidos (
+      id, motoboy_id, numero, source, payment, external_id, status, detalhes_json, data_iso, created_at
+    )
+    SELECT
+      id,
+      motoboy_id,
+      numero,
+      source,
+      payment,
+      NULL,
+      'RECEBIDO',
+      NULL,
+      data_iso,
+      created_at
+    FROM motoboy_pedidos_old;
+
+    DROP TABLE motoboy_pedidos_old;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_motoboy_pedido_unico_numero
+      ON motoboy_pedidos(motoboy_id, numero);
+    CREATE INDEX IF NOT EXISTS idx_motoboy_pedidos_data
+      ON motoboy_pedidos(data_iso);
+  `);
+}
+
+ensureMotoboyPedidosAllowsNullMotoboy();
+ensureColumn("motoboy_pedidos", "external_id", "TEXT");
+ensureColumn("motoboy_pedidos", "status", "TEXT NOT NULL DEFAULT 'RECEBIDO'");
+ensureColumn("motoboy_pedidos", "detalhes_json", "TEXT");
 
 if (!desabilitarSeedExemplo) {
 const totalMesas = db.prepare("SELECT COUNT(*) AS total FROM mesas").get().total;

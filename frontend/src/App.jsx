@@ -640,7 +640,7 @@ function Layout() {
 
             {podeVerEntregas && (
               <button onClick={() => setPagina("entregas")} style={navButton(pagina === "entregas")}>
-                Entregas
+                Online
               </button>
             )}
 

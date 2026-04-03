@@ -5,6 +5,9 @@ import SelectField from "../components/SelectField";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { formatDateTimePtBr } from "../utils/datetime";
 
+const HISTORICO_INICIAL = 40;
+const HISTORICO_PASSO = 80;
+
 function moeda(valor) {
   return Number(valor || 0).toLocaleString("pt-BR", {
     style: "currency",
@@ -54,6 +57,8 @@ export default function Historico() {
   const [pinSeguranca, setPinSeguranca] = useState("");
   const [dataInicio, setDataInicio] = useState(() => filtroHistoricoPeriodo?.data_inicio || "");
   const [dataFim, setDataFim] = useState(() => filtroHistoricoPeriodo?.data_fim || "");
+  const [quantidadeRenderizada, setQuantidadeRenderizada] = useState(HISTORICO_INICIAL);
+  const buscaDeferred = React.useDeferredValue(busca);
 
   if (!hasPermission("APP_HISTORICO_VER")) {
     return <p>Sem permissao para acessar o historico.</p>;
@@ -87,7 +92,7 @@ export default function Historico() {
   }, [formasPagamento]);
 
   const filtrado = useMemo(() => {
-    const termo = busca.trim().toLowerCase();
+    const termo = buscaDeferred.trim().toLowerCase();
 
     return historico.filter((item) => {
       const formaAtual = String(item.forma_pagamento || "").toUpperCase();
@@ -111,7 +116,7 @@ export default function Historico() {
 
       return formaOk && buscaOk;
     });
-  }, [historico, busca, formaFiltro]);
+  }, [historico, buscaDeferred, formaFiltro]);
 
   const resumo = useMemo(() => {
     const faturamento = filtrado.reduce((acc, item) => acc + Number(item.total || 0), 0);
@@ -122,6 +127,14 @@ export default function Historico() {
       taxaServico
     };
   }, [filtrado]);
+
+  React.useEffect(() => {
+    setQuantidadeRenderizada(HISTORICO_INICIAL);
+  }, [busca, formaFiltro, dataInicio, dataFim, historico.length]);
+
+  const registrosVisiveis = useMemo(() => {
+    return filtrado.slice(0, quantidadeRenderizada);
+  }, [filtrado, quantidadeRenderizada]);
 
   function abrirConfirmExcluir(item) {
     setRegistroExcluir(item);
@@ -238,7 +251,13 @@ export default function Historico() {
       <div style={{ display: "grid", gap: 12 }}>
         {filtrado.length === 0 && <div style={cardStyle}>Nenhum registro encontrado.</div>}
 
-        {filtrado.map((item) => (
+        {filtrado.length > 0 && (
+          <div style={subResumoListaStyle}>
+            Mostrando {registrosVisiveis.length} de {filtrado.length} registro(s)
+          </div>
+        )}
+
+        {registrosVisiveis.map((item) => (
           <div key={item.id} style={cardStyle}>
             <div style={topoCardStyle}>
               <div style={{ fontWeight: 800, fontSize: 18 }}>Mesa {item.mesa_numero}</div>
@@ -316,6 +335,17 @@ export default function Historico() {
             )}
           </div>
         ))}
+
+        {registrosVisiveis.length < filtrado.length && (
+          <button
+            type="button"
+            style={secondaryButtonStyle(loading)}
+            onClick={() => setQuantidadeRenderizada((prev) => prev + HISTORICO_PASSO)}
+            disabled={loading}
+          >
+            Carregar mais historico
+          </button>
+        )}
       </div>
 
       <ConfirmDialog
@@ -401,6 +431,11 @@ const resumoCardStyle = {
   background: "#141a32",
   display: "grid",
   gap: 6
+};
+
+const subResumoListaStyle = {
+  color: "#a9b0cf",
+  fontSize: 13
 };
 
 const cardStyle = {

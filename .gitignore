@@ -21,3 +21,4 @@ tmp-web.err
 tmp-web.log
 tmp-*/
 tmp_*/
+sandbox-api/data/*.json

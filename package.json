@@ -1,6 +1,6 @@
 {
   "name": "gastrocode-brasil-pdv",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "main": "electron/main.js",
   "type": "commonjs",
   "engines": {
@@ -19,6 +19,7 @@
     "build:desktop": "npm run build:web && npm run rebuild:electron && electron-builder --win nsis --config electron-builder.config.cjs && node scripts/postbuild-desktop.js",
     "build:desktop:publish": "npm run build:web && npm run rebuild:electron && electron-builder --win nsis --config electron-builder.config.cjs --publish always && node scripts/postbuild-desktop.js",
     "publish:github": "powershell -ExecutionPolicy Bypass -File scripts/publish-github.ps1",
+    "api:teste": "node sandbox-api/server.js",
     "license:init": "node scripts/license/init-keys.js",
     "license:generate": "node scripts/license/generate-license.js",
     "license:verify": "node scripts/license/verify-token.js",

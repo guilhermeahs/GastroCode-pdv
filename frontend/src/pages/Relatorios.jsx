@@ -178,16 +178,35 @@ function baixarTexto(nomeArquivo, conteudo, mimeType) {
   URL.revokeObjectURL(url);
 }
 
-function BarCard({ titulo, itens = [], emptyText, formatadorValor = moeda, color = "#2e63f4" }) {
+function BarCard({
+  titulo,
+  itens = [],
+  emptyText,
+  formatadorValor = moeda,
+  color = "#2e63f4",
+  maxListaAltura = 0
+}) {
   const maxValor = useMemo(() => {
     return itens.reduce((max, item) => Math.max(max, Number(item.valor || 0)), 0);
   }, [itens]);
+  const usarScroll = Number(maxListaAltura || 0) > 0 && itens.length > 10;
 
   return (
     <div style={cardStyle}>
       <h3 style={{ marginTop: 0 }}>{titulo}</h3>
       {itens.length < 1 && <div style={{ color: "#b8c0db" }}>{emptyText}</div>}
-      <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
+      <div
+        style={{
+          ...barListStyle,
+          ...(usarScroll
+            ? {
+                maxHeight: maxListaAltura,
+                overflowY: "auto",
+                paddingRight: 4
+              }
+            : null)
+        }}
+      >
         {itens.map((item) => {
           const valor = Number(item.valor || 0);
           const pct = maxValor > 0 ? Math.max(5, (valor / maxValor) * 100) : 0;
@@ -610,6 +629,7 @@ export default function Relatorios() {
               emptyText="Sem vendas no periodo."
               formatadorValor={moeda}
               color="#14a86e"
+              maxListaAltura={520}
             />
           </div>
 
@@ -629,6 +649,7 @@ export default function Relatorios() {
               emptyText="Sem categorias no periodo."
               formatadorValor={moeda}
               color="#7b8cff"
+              maxListaAltura={520}
             />
           </div>
 
@@ -639,6 +660,7 @@ export default function Relatorios() {
               emptyText="Sem vendas fechadas por garcom no periodo."
               formatadorValor={moeda}
               color="#4fc4ff"
+              maxListaAltura={520}
             />
             <BarCard
               titulo="Vendas por hora"
@@ -878,6 +900,12 @@ const cardStyle = {
   borderRadius: 16,
   background: "#151a31",
   padding: 14,
+  display: "grid",
+  gap: 10,
+  alignContent: "start"
+};
+
+const barListStyle = {
   display: "grid",
   gap: 10,
   alignContent: "start"
