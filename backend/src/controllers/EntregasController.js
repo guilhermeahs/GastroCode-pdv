@@ -199,12 +199,76 @@ const EntregasController = {
     }
   },
 
-  atribuirPedido(req, res) {
+  async opcoesCancelamentoPedido(req, res) {
+    try {
+      const pedidoId = toId(req.params.pedidoId);
+      const pedidoAtual = EntregaModel.obterPedido(pedidoId);
+      const result = await EntregasIntegracaoService.listarOpcoesCancelamentoManual(pedidoAtual);
+      res.json(result || { items: [] });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  },
+
+  async confirmarPedido(req, res) {
+    try {
+      const pedidoId = toId(req.params.pedidoId);
+      const pedidoAtual = EntregaModel.obterPedido(pedidoId);
+      const confirmResult = await EntregasIntegracaoService.confirmarPedidoManual(pedidoAtual, req.body || {});
+      const atualizado = EntregaModel.atualizarPedido(pedidoId, {
+        status: confirmResult?.status || pedidoAtual?.status || "CONFIRMED",
+        detalhes: confirmResult?.detalhes || pedidoAtual?.detalhes || {}
+      });
+      res.json({
+        ...atualizado,
+        confirm_result: confirmResult || null
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  },
+
+  async cancelarPedido(req, res) {
+    try {
+      const pedidoId = toId(req.params.pedidoId);
+      const pedidoAtual = EntregaModel.obterPedido(pedidoId);
+      const cancelResult = await EntregasIntegracaoService.cancelarPedidoManual(pedidoAtual, req.body || {});
+      const atualizado = EntregaModel.atualizarPedido(pedidoId, {
+        status: cancelResult?.status || "CANCELLED",
+        detalhes: cancelResult?.detalhes || pedidoAtual?.detalhes || {}
+      });
+      res.json({
+        ...atualizado,
+        cancel_result: cancelResult || null
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  },
+
+  async atribuirPedido(req, res) {
     try {
       const pedidoId = toId(req.params.pedidoId);
       const motoboyId = toId(req.body?.motoboy_id);
-      const atualizado = EntregaModel.atribuirPedido(motoboyId, pedidoId, req.body || {});
-      res.json(atualizado);
+      let atualizado = EntregaModel.atribuirPedido(motoboyId, pedidoId, req.body || {});
+      const autoDispatch = await EntregasIntegracaoService.autoDespacharAoAtribuir(atualizado);
+
+      if (autoDispatch?.applied) {
+        atualizado = EntregaModel.atribuirPedido(motoboyId, pedidoId, {
+          ...(req.body || {}),
+          source: atualizado.source,
+          payment: atualizado.payment,
+          whenISO: atualizado.data_iso,
+          external_id: atualizado.external_id,
+          status: autoDispatch.status,
+          detalhes: autoDispatch.detalhes
+        });
+      }
+
+      res.json({
+        ...atualizado,
+        auto_dispatch: autoDispatch || { applied: false }
+      });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }

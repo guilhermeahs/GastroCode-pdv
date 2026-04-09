@@ -854,30 +854,33 @@ async function importFromProvider(provider, query = {}) {
 }
 
 async function sincronizarTodosIntegrados(query = {}) {
-  const providers = Object.values(PROVIDERS);
-  const results = [];
+  const providers = Object.values(PROVIDERS).filter((provider) => provider.key !== "hub");
+  const enabledProviders = providers.filter((provider) => readConfig(provider).enabled);
 
-  for (const provider of providers) {
-    if (provider.key === "hub") continue;
-    const cfg = readConfig(provider);
-    if (!cfg.enabled) continue;
-    try {
-      const result = await importFromProvider(provider, query);
-      results.push({
-        provider: provider.key,
-        ok: true,
-        ...(result || {})
-      });
-    } catch (error) {
-      results.push({
-        provider: provider.key,
-        ok: false,
-        message: String(error?.message || "falha no sync")
-      });
-    }
+  if (enabledProviders.length < 1) {
+    return [];
   }
 
-  return results;
+  const settled = await Promise.all(
+    enabledProviders.map(async (provider) => {
+      try {
+        const result = await importFromProvider(provider, query);
+        return {
+          provider: provider.key,
+          ok: true,
+          ...(result || {})
+        };
+      } catch (error) {
+        return {
+          provider: provider.key,
+          ok: false,
+          message: String(error?.message || "falha no sync")
+        };
+      }
+    })
+  );
+
+  return settled;
 }
 
 async function executarAutoSyncComLog() {
@@ -928,6 +931,723 @@ function iniciarAgendadorAutoSync() {
   }
 
   console.log(`[entregas] auto-sync ligado (${Math.round(intervalMs / 1000)}s).`);
+}
+
+function parseDetalhesEntrega(rawValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === "") return {};
+  if (typeof rawValue === "object") return rawValue;
+  try {
+    const parsed = JSON.parse(String(rawValue));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function toIsoOrEmpty(value) {
+  const txt = String(value || "").trim();
+  if (!txt) return "";
+  const parsed = new Date(txt);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString();
+}
+
+function extractAgendamentoStateFromDetalhes(detalhes = {}) {
+  const scheduling = detalhes?.scheduling && typeof detalhes.scheduling === "object" ? detalhes.scheduling : {};
+  const mode = String(scheduling?.mode || "")
+    .trim()
+    .toUpperCase();
+  const isImmediateMode = mode.includes("IMMEDIATE") || mode.includes("ASAP");
+  const scheduleStartRaw = pick(
+    scheduling?.scheduled_window_start,
+    scheduling?.scheduled_at,
+    detalhes?.raw_order?.schedule?.deliveryDateTimeStart,
+    detalhes?.raw_order?.schedule?.scheduledDateTime,
+    detalhes?.raw_order?.orderTiming?.scheduledDateTime,
+    detalhes?.raw_order?.scheduledAt,
+    detalhes?.raw_order?.scheduled_for
+  );
+  const scheduleEndRaw = pick(
+    scheduling?.scheduled_window_end,
+    detalhes?.raw_order?.schedule?.deliveryDateTimeEnd
+  );
+  const scheduleStartIso = toIsoOrEmpty(scheduleStartRaw);
+  const scheduleEndIso = toIsoOrEmpty(scheduleEndRaw);
+  const isScheduled =
+    !isImmediateMode &&
+    (toBool(scheduling?.is_scheduled, false) ||
+      mode.includes("SCHEDULE") ||
+      Boolean(scheduleStartIso) ||
+      Boolean(scheduleEndIso));
+
+  const startTs = scheduleStartIso ? new Date(scheduleStartIso).getTime() : Number.NaN;
+  const blockedByWindow = isScheduled && Number.isFinite(startTs) && startTs > Date.now() + 15000;
+
+  return {
+    isScheduled,
+    blockedByWindow,
+    scheduleStartIso,
+    scheduleEndIso
+  };
+}
+
+function shouldPromoteToDispatched(statusRaw = "") {
+  const status = String(statusRaw || "")
+    .trim()
+    .toUpperCase();
+  if (!status) return true;
+  if (
+    status.includes("CANCEL") ||
+    status.includes("REJECT") ||
+    status.includes("DENIED") ||
+    status.includes("DECLINED")
+  ) {
+    return false;
+  }
+  if (
+    status.includes("DELIVER") ||
+    status.includes("CONCLUDED") ||
+    status.includes("FINISHED") ||
+    status.includes("COMPLETED")
+  ) {
+    return false;
+  }
+  if (status.includes("DISPATCH") || status.includes("ROUTE") || status.includes("ON_THE_WAY")) {
+    return false;
+  }
+  return true;
+}
+
+function shouldPromoteToReadyForPickup(statusRaw = "") {
+  const status = String(statusRaw || "")
+    .trim()
+    .toUpperCase();
+  if (!status) return true;
+  if (
+    status.includes("CANCEL") ||
+    status.includes("REJECT") ||
+    status.includes("DENIED") ||
+    status.includes("DECLINED")
+  ) {
+    return false;
+  }
+  if (status.includes("READY_TO_PICKUP") || status.includes("READY_FOR_PICKUP")) {
+    return false;
+  }
+  if (
+    status.includes("DELIVER") ||
+    status.includes("CONCLUDED") ||
+    status.includes("FINISHED") ||
+    status.includes("COMPLETED")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function shouldPromoteToConfirmed(statusRaw = "") {
+  const status = String(statusRaw || "")
+    .trim()
+    .toUpperCase();
+  if (!status) return true;
+  if (
+    status.includes("CANCEL") ||
+    status.includes("REJECT") ||
+    status.includes("DENIED") ||
+    status.includes("DECLINED")
+  ) {
+    return false;
+  }
+  if (
+    status.includes("CONFIRM") ||
+    status === "ACCEPTED" ||
+    status === "APPROVED" ||
+    status.includes("PREPAR") ||
+    status.includes("READY") ||
+    status.includes("DISPATCH") ||
+    status.includes("ROUTE") ||
+    status.includes("ON_THE_WAY") ||
+    status.includes("DELIVER") ||
+    status.includes("CONCLUDED") ||
+    status.includes("FINISHED") ||
+    status.includes("COMPLETED")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isCancelStatus(statusRaw = "") {
+  const status = String(statusRaw || "")
+    .trim()
+    .toUpperCase();
+  if (!status) return false;
+  return (
+    status.includes("CANCEL") ||
+    status.includes("REJECT") ||
+    status.includes("DENIED") ||
+    status.includes("DECLINED")
+  );
+}
+
+function inferExternalOrderId(pedido = {}, detalhes = {}) {
+  return pick(
+    pedido?.external_id,
+    detalhes?.order_id,
+    detalhes?.orderId,
+    detalhes?.id,
+    detalhes?.raw_order?.id,
+    detalhes?.raw_order?.orderId,
+    detalhes?.raw_order?.order_id
+  );
+}
+
+function inferOrderTypeFromDetalhes(detalhes = {}) {
+  const raw = pick(
+    detalhes?.order_type,
+    detalhes?.orderType,
+    detalhes?.raw_order?.orderType,
+    detalhes?.raw_order?.type,
+    detalhes?.raw_order?.fulfillment?.type
+  );
+  const key = String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+  if (!key) return "ENTREGA";
+  if (key.includes("RETIR") || key.includes("TAKEOUT") || key.includes("PICKUP")) return "RETIRADA_LOCAL";
+  if (key.includes("DELIVERY") || key.includes("ENTREGA")) return "ENTREGA";
+  return key.slice(0, 40);
+}
+
+function isPedidoIntegracaoAutomatica(pedido = {}, detalhes = {}) {
+  const source = String(pedido?.source || "")
+    .trim()
+    .toUpperCase();
+  if (source !== "IFOOD" && source !== "NINENINE") return false;
+  const status = String(pedido?.status || "")
+    .trim()
+    .toUpperCase();
+  if (!status || status === "MANUAL") return false;
+  const meta =
+    detalhes?.integration_meta && typeof detalhes.integration_meta === "object"
+      ? detalhes.integration_meta
+      : {};
+  const autoImported =
+    toBool(meta?.auto_imported, false) ||
+    toBool(detalhes?.auto_imported, false) ||
+    toBool(detalhes?.importado_automaticamente, false);
+  const legacyAutoImported =
+    !autoImported &&
+    (Boolean(String(detalhes?.order_id || detalhes?.orderId || "").trim()) ||
+      Boolean(detalhes?.raw_order && typeof detalhes.raw_order === "object") ||
+      String(detalhes?.source || "").trim().toUpperCase() === source);
+  if (!autoImported && !legacyAutoImported) return false;
+  const externalId = inferExternalOrderId(pedido, detalhes);
+  return Boolean(String(externalId || "").trim());
+}
+
+function parseResponseTextSafe(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function buildNinenineDispatchUrl(config, externalId) {
+  const orderId = encodeURIComponent(String(externalId || "").trim());
+  const importUrl = String(config?.import_url || "").trim();
+  if (importUrl) {
+    try {
+      const base = new URL(importUrl);
+      const match = base.pathname.match(/^(.*)\/orders\/?$/i);
+      if (match) {
+        base.pathname = `${match[1] || ""}/orders/${orderId}/dispatch`;
+      } else {
+        base.pathname = `/orders/${orderId}/dispatch`;
+      }
+      base.search = "";
+      return base.toString();
+    } catch {
+      // segue para fallback abaixo
+    }
+  }
+
+  const baseUrl = String(config?.base_url || "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (!baseUrl) return "";
+  return `${baseUrl}/orders/${orderId}/dispatch`;
+}
+
+async function autoDispatchNinenine(config, pedido, externalId) {
+  const url = buildNinenineDispatchUrl(config, externalId);
+  if (!url) {
+    return {
+      attempted: false,
+      ok: false,
+      provider: "ninenine",
+      order_id: String(externalId || "").trim(),
+      message: "URL da integracao 99 nao configurada para despacho."
+    };
+  }
+
+  const headers = {
+    accept: "application/json",
+    "content-type": "application/json"
+  };
+  if (config.api_key) headers["x-api-key"] = config.api_key;
+  if (config.bearer_token) headers.authorization = `Bearer ${config.bearer_token}`;
+
+  const body = JSON.stringify({
+    order_id: String(externalId || "").trim(),
+    status: "DISPATCHED",
+    source: "NINENINE",
+    motoboy_id: Number(pedido?.motoboy_id || 0) || null
+  });
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body
+    });
+    const raw = await response.text();
+    const parsed = parseResponseTextSafe(raw);
+    if (!response.ok) {
+      return {
+        attempted: true,
+        ok: false,
+        provider: "ninenine",
+        order_id: String(externalId || "").trim(),
+        message: `Falha no despacho 99: HTTP ${response.status}${
+          parsed ? ` - ${compactSnippet(typeof parsed === "string" ? parsed : JSON.stringify(parsed))}` : ""
+        }`
+      };
+    }
+    return {
+      attempted: true,
+      ok: true,
+      provider: "ninenine",
+      order_id: String(externalId || "").trim(),
+      message: "Pedido despachado automaticamente na integracao 99."
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      provider: "ninenine",
+      order_id: String(externalId || "").trim(),
+      message: `Falha no despacho 99: ${formatNetworkError(url, error)}`
+    };
+  }
+}
+
+async function executarAutoDespacharAoAtribuir(pedido = {}) {
+  const detalhes = parseDetalhesEntrega(pedido?.detalhes_json || pedido?.detalhes || null);
+  if (!isPedidoIntegracaoAutomatica(pedido, detalhes)) {
+    return {
+      applied: false,
+      reason: "not_integration_auto_order"
+    };
+  }
+
+  const source = String(pedido?.source || "")
+    .trim()
+    .toUpperCase();
+  const orderType = inferOrderTypeFromDetalhes(detalhes);
+  const isTakeoutIfood = source === "IFOOD" && orderType === "RETIRADA_LOCAL";
+  const externalId = String(inferExternalOrderId(pedido, detalhes) || "").trim();
+  const previousDispatch = detalhes.dispatch_auto && typeof detalhes.dispatch_auto === "object" ? detalhes.dispatch_auto : {};
+  if (toBool(previousDispatch.sent, false)) {
+    return {
+      applied: false,
+      reason: "already_dispatched"
+    };
+  }
+
+  const agendamento = extractAgendamentoStateFromDetalhes(detalhes);
+  if (source === "IFOOD" && agendamento.isScheduled && agendamento.blockedByWindow) {
+    const nowIso = new Date().toISOString();
+    const currentStatus = String(pedido?.status || detalhes?.status || detalhes?.orderStatus || "RECEIVED")
+      .trim()
+      .toUpperCase() || "RECEIVED";
+    const schedulingAtual = detalhes?.scheduling && typeof detalhes.scheduling === "object" ? detalhes.scheduling : {};
+    const blockedMessage = agendamento.scheduleStartIso
+      ? `Pedido agendado: despacho bloqueado ate ${agendamento.scheduleStartIso}.`
+      : "Pedido agendado: despacho bloqueado ate a janela de atendimento.";
+
+    return {
+      applied: true,
+      reason: "scheduled_not_open",
+      status: currentStatus,
+      detalhes: {
+        ...detalhes,
+        status: currentStatus,
+        orderStatus: currentStatus,
+        scheduling: {
+          ...schedulingAtual,
+          is_scheduled: true,
+          scheduled_at: agendamento.scheduleStartIso || schedulingAtual?.scheduled_at || null,
+          scheduled_window_start: agendamento.scheduleStartIso || schedulingAtual?.scheduled_window_start || null,
+          scheduled_window_end: agendamento.scheduleEndIso || schedulingAtual?.scheduled_window_end || null
+        },
+        dispatch_auto: {
+          ...previousDispatch,
+          sent: false,
+          blocked_by_schedule: true,
+          blocked_until: agendamento.scheduleStartIso || null,
+          attempted_at: nowIso,
+          provider: source,
+          order_id: externalId,
+          external_attempted: false,
+          external_ok: false,
+          external_message: blockedMessage.slice(0, 280),
+          mode: "ASSIGN_WAIT_SCHEDULE_WINDOW"
+        }
+      },
+      external: {
+        attempted: false,
+        ok: false,
+        blocked_by_schedule: true,
+        provider: "ifood",
+        order_id: externalId,
+        message: blockedMessage
+      },
+      message: blockedMessage
+    };
+  }
+
+  let externalResult = {
+    attempted: false,
+    ok: false,
+    provider: source === "IFOOD" ? "ifood" : "ninenine",
+    order_id: externalId,
+    message: ""
+  };
+
+  if (source === "IFOOD") {
+    try {
+      externalResult = await IfoodHomologacaoService.autoDispatchOrder(externalId, {
+        motoboy: String(detalhes?.courier?.name || detalhes?.motoboy || "").trim(),
+        order_type: orderType
+      });
+    } catch (error) {
+      externalResult = {
+        attempted: true,
+        ok: false,
+        provider: "ifood",
+        order_id: externalId,
+        message: String(error?.message || "Falha no auto-despacho iFood.")
+      };
+    }
+  } else if (source === "NINENINE") {
+    const cfg99 = readConfig(PROVIDERS.ninenine);
+    if (cfg99.enabled) {
+      externalResult = await autoDispatchNinenine(cfg99, pedido, externalId);
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const currentStatus = String(pedido?.status || "").trim().toUpperCase() || "RECEIVED";
+  const shouldPromoteStatus =
+    !externalResult?.attempted || externalResult?.ok || Boolean(externalResult?.already_applied);
+  const nextStatus = isTakeoutIfood
+    ? shouldPromoteStatus && shouldPromoteToReadyForPickup(currentStatus)
+      ? "READY_TO_PICKUP"
+      : currentStatus
+    : shouldPromoteStatus && shouldPromoteToDispatched(currentStatus)
+      ? "DISPATCHED"
+      : currentStatus;
+  const nextDetalhes = {
+    ...detalhes,
+    status: nextStatus,
+    orderStatus: nextStatus,
+    dispatch_auto: {
+      sent: true,
+      sent_at: nowIso,
+      provider: source,
+      order_id: externalId,
+      motoboy_id: Number(pedido?.motoboy_id || 0) || null,
+      action: isTakeoutIfood ? "readyToPickup" : "dispatch",
+      external_attempted: Boolean(externalResult?.attempted),
+      external_ok: Boolean(externalResult?.ok),
+      external_message: String(externalResult?.message || "").slice(0, 280),
+      mode: isTakeoutIfood ? "ASSIGN_TO_READY_FOR_PICKUP" : "ASSIGN_TO_MOTOBOY"
+    }
+  };
+
+  const feedback = isTakeoutIfood
+    ? externalResult?.ok
+      ? "Pedido marcado como pronto para retirada no iFood."
+      : externalResult?.attempted
+        ? "Pedido atribuido, mas a marcacao de pronto para retirada falhou no iFood."
+        : "Pedido atribuido com atualizacao local."
+    : externalResult?.ok
+      ? "Auto-despacho executado."
+      : externalResult?.attempted
+        ? "Pedido enviado ao motoboy; auto-despacho externo falhou."
+        : "Pedido enviado ao motoboy com despacho local.";
+
+  return {
+    applied: true,
+    status: nextStatus,
+    detalhes: nextDetalhes,
+    external: externalResult,
+    message: feedback
+  };
+}
+
+async function confirmarPedidoIntegracaoManual(pedido = {}, options = {}) {
+  const pedidoId = Number(pedido?.id || 0);
+  if (!Number.isFinite(pedidoId) || pedidoId < 1) {
+    throw new Error("Pedido invalido para confirmacao.");
+  }
+
+  const detalhes = parseDetalhesEntrega(pedido?.detalhes_json || pedido?.detalhes || null);
+  const source = String(pedido?.source || "")
+    .trim()
+    .toUpperCase();
+  const statusAtual = String(pedido?.status || detalhes?.status || detalhes?.orderStatus || "RECEIVED")
+    .trim()
+    .toUpperCase();
+
+  if (isCancelStatus(statusAtual)) {
+    throw new Error("Pedido cancelado nao pode ser confirmado manualmente.");
+  }
+
+  const externalId = String(inferExternalOrderId(pedido, detalhes) || "").trim();
+  let externalResult = {
+    attempted: false,
+    ok: true,
+    provider: source.toLowerCase() || "manual",
+    order_id: externalId,
+    message: "Confirmacao local aplicada."
+  };
+
+  if (source === "IFOOD") {
+    if (!externalId) {
+      throw new Error("Pedido iFood sem ID externo para confirmacao.");
+    }
+    externalResult = await IfoodHomologacaoService.confirmOrder(externalId, {
+      mode: "MANUAL_PANEL",
+      source: "PDV_GASTROCODE",
+      observacao: String(options?.observacao || "").trim().slice(0, 120)
+    });
+    if (externalResult?.attempted && !externalResult?.ok) {
+      throw new Error(String(externalResult?.message || "Falha ao confirmar pedido no iFood."));
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const previousConfirmation =
+    detalhes?.confirmation && typeof detalhes.confirmation === "object" ? detalhes.confirmation : {};
+  const previousFlags =
+    detalhes?.scenario_flags && typeof detalhes.scenario_flags === "object" ? detalhes.scenario_flags : {};
+  const nextStatus = shouldPromoteToConfirmed(statusAtual) ? "CONFIRMED" : statusAtual;
+  const nextDetalhes = {
+    ...detalhes,
+    status: nextStatus,
+    orderStatus: nextStatus,
+    confirmation: {
+      ...previousConfirmation,
+      confirmed: true,
+      confirmed_at: nowIso,
+      source: "PDV_GASTROCODE",
+      mode: "MANUAL_PANEL",
+      endpoint: String(externalResult?.endpoint || "").slice(0, 120),
+      already_confirmed: Boolean(externalResult?.already_applied),
+      external_provider: String(externalResult?.provider || source || "manual").slice(0, 40),
+      external_message: String(externalResult?.message || "").slice(0, 280)
+    },
+    scenario_flags: {
+      ...previousFlags,
+      pedido_confirmado: true
+    },
+    confirmacao_manual_sistema: true,
+    confirmacao_manual_at: nowIso
+  };
+
+  return {
+    applied: true,
+    status: nextStatus,
+    detalhes: nextDetalhes,
+    external: externalResult,
+    message:
+      source === "IFOOD"
+        ? "Pedido confirmado manualmente no sistema e enviado ao iFood."
+        : "Pedido confirmado manualmente no sistema."
+  };
+}
+
+async function cancelarPedidoIntegracaoManual(pedido = {}, options = {}) {
+  const pedidoId = Number(pedido?.id || 0);
+  if (!Number.isFinite(pedidoId) || pedidoId < 1) {
+    throw new Error("Pedido invalido para cancelamento.");
+  }
+
+  const detalhes = parseDetalhesEntrega(pedido?.detalhes_json || pedido?.detalhes || null);
+  if (isCancelStatus(pedido?.status || detalhes?.status || detalhes?.orderStatus || "")) {
+    return {
+      applied: false,
+      reason: "already_cancelled",
+      status: String(pedido?.status || "CANCELLED").trim().toUpperCase() || "CANCELLED",
+      detalhes,
+      external: {
+        attempted: false,
+        ok: true,
+        provider: String(pedido?.source || "").trim().toLowerCase() || "manual",
+        message: "Pedido ja esta cancelado."
+      },
+      message: "Pedido ja estava cancelado."
+    };
+  }
+
+  const source = String(pedido?.source || "")
+    .trim()
+    .toUpperCase();
+  const reasonCode = String(
+    options?.reason_code ||
+      options?.reasonCode ||
+      options?.motivo_codigo ||
+      options?.motivoCode ||
+      options?.reason ||
+      options?.motivo ||
+      "CANCELADO_MANUALMENTE_NO_PDV"
+  )
+    .trim()
+    .slice(0, 180);
+  const reasonLabel = String(
+    options?.reason_label ||
+      options?.reasonLabel ||
+      options?.motivo_label ||
+      options?.motivoLabel ||
+      options?.motivo ||
+      reasonCode
+  )
+    .trim()
+    .slice(0, 180);
+  const subreasonCode = String(
+    options?.subreason_code || options?.subreasonCode || options?.subReasonCode || options?.submotivo_codigo || ""
+  )
+    .trim()
+    .slice(0, 120);
+  const subreasonLabel = String(
+    options?.subreason_label || options?.subreasonLabel || options?.subReasonLabel || options?.submotivo || subreasonCode
+  )
+    .trim()
+    .slice(0, 180);
+  const observacao = String(
+    options?.observacao ||
+      options?.observation ||
+      options?.description ||
+      options?.note ||
+      ""
+  )
+    .trim()
+    .slice(0, 240);
+  const externalId = String(inferExternalOrderId(pedido, detalhes) || "").trim();
+
+  let externalResult = {
+    attempted: false,
+    ok: false,
+    provider: source.toLowerCase() || "manual",
+    order_id: externalId,
+    message: "Cancelamento local aplicado."
+  };
+
+  if (source === "IFOOD") {
+    if (!externalId) {
+      throw new Error("Pedido iFood sem ID externo para cancelamento.");
+    }
+    externalResult = await IfoodHomologacaoService.manualCancelOrder(externalId, {
+      reason_code: reasonCode,
+      reason_label: reasonLabel,
+      subreason_code: subreasonCode,
+      subreason_label: subreasonLabel,
+      observacao,
+      description: observacao || reasonLabel
+    });
+    if (externalResult?.attempted && !externalResult?.ok) {
+      throw new Error(String(externalResult?.message || "Falha ao cancelar pedido no iFood."));
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const prevCancellation =
+    detalhes?.cancellation && typeof detalhes.cancellation === "object" ? detalhes.cancellation : {};
+  const prevFlags =
+    detalhes?.scenario_flags && typeof detalhes.scenario_flags === "object" ? detalhes.scenario_flags : {};
+
+  const nextDetalhes = {
+    ...detalhes,
+    status: "CANCELLED",
+    orderStatus: "CANCELLED",
+    cancellation: {
+      ...prevCancellation,
+      is_cancelled: true,
+      reason: reasonLabel || reasonCode,
+      reason_code: reasonCode,
+      reason_label: reasonLabel,
+      subreason_code: subreasonCode || "",
+      subreason_label: subreasonLabel || "",
+      notes: observacao || "",
+      source: "PDV_GASTROCODE",
+      canceled_at: nowIso
+    },
+    scenario_flags: {
+      ...prevFlags,
+      pedido_manual_cancelamento: true
+    },
+    cancelamento_manual_sistema: true,
+    cancelamento_manual_at: nowIso,
+    cancelamento_manual_reason: reasonLabel || reasonCode,
+    cancelamento_manual_reason_code: reasonCode,
+    cancelamento_manual_subreason_code: subreasonCode || "",
+    cancelamento_manual_observacao: observacao || "",
+    cancelamento_manual_external: {
+      attempted: Boolean(externalResult?.attempted),
+      ok: Boolean(externalResult?.ok),
+      provider: String(externalResult?.provider || source || "manual").trim(),
+      message: String(externalResult?.message || "").slice(0, 280)
+    }
+  };
+
+  return {
+    applied: true,
+    status: "CANCELLED",
+    detalhes: nextDetalhes,
+    external: externalResult,
+    message:
+      source === "IFOOD"
+        ? "Pedido cancelado manualmente no sistema e enviado ao iFood."
+        : "Pedido cancelado manualmente no sistema."
+  };
+}
+
+async function listarOpcoesCancelamentoManual(pedido = {}) {
+  const detalhes = parseDetalhesEntrega(pedido?.detalhes_json || pedido?.detalhes || null);
+  const source = String(pedido?.source || "")
+    .trim()
+    .toUpperCase();
+  const externalId = String(inferExternalOrderId(pedido, detalhes) || "").trim();
+
+  if (source === "IFOOD") {
+    return IfoodHomologacaoService.listManualCancellationOptions(externalId);
+  }
+
+  return {
+    provider: source || "manual",
+    source: "fallback",
+    items: [
+      { code: "CANCELADO_MANUALMENTE_NO_PDV", label: "Cancelado manualmente no sistema", subreasons: [] }
+    ],
+    warning: "Motivos detalhados disponiveis apenas para iFood.",
+    codes_safe_for_ifood: source !== "IFOOD"
+  };
 }
 
 const EntregasIntegracaoService = {
@@ -983,6 +1703,22 @@ const EntregasIntegracaoService = {
 
   renovarIfoodToken(force = true) {
     return IfoodHomologacaoService.refreshAccessToken(Boolean(force));
+  },
+
+  autoDespacharAoAtribuir(pedido = {}) {
+    return executarAutoDespacharAoAtribuir(pedido || {});
+  },
+
+  confirmarPedidoManual(pedido = {}, options = {}) {
+    return confirmarPedidoIntegracaoManual(pedido || {}, options || {});
+  },
+
+  cancelarPedidoManual(pedido = {}, options = {}) {
+    return cancelarPedidoIntegracaoManual(pedido || {}, options || {});
+  },
+
+  listarOpcoesCancelamentoManual(pedido = {}) {
+    return listarOpcoesCancelamentoManual(pedido || {});
   },
 
   iniciarAgendadorAutoSync

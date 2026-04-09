@@ -51,6 +51,13 @@ function nomeFormaPagamento(codigo) {
   return code || "Nao informado";
 }
 
+function nomeFonteOnline(codigo) {
+  const code = String(codigo || "").toUpperCase();
+  if (code === "IFOOD") return "iFood";
+  if (code === "NINENINE" || code === "99") return "99 Food";
+  return code || "Online";
+}
+
 function nomeTipoMovimento(tipo) {
   const code = String(tipo || "").toUpperCase();
   if (code === "SANGRIA") return "Sangria";
@@ -165,6 +172,61 @@ function gerarCsvRelatorio(dados) {
     linhas.push(["desempenho_garcom", item.garcom || "-", item.total || 0].map(csvEscape).join(";"));
   }
 
+  const pedidosOnlineResumo = dados?.pedidosOnlineResumo || {};
+  linhas.push(["online_resumo", "pedidos", pedidosOnlineResumo.pedidos || 0].map(csvEscape).join(";"));
+  linhas.push(["online_resumo", "valor_total", pedidosOnlineResumo.valor_total || 0].map(csvEscape).join(";"));
+  linhas.push(["online_resumo", "ticket_medio", pedidosOnlineResumo.ticket_medio || 0].map(csvEscape).join(";"));
+  linhas.push(["online_resumo", "cancelados", pedidosOnlineResumo.cancelados || 0].map(csvEscape).join(";"));
+
+  const pedidosOnlinePorFonte = Array.isArray(dados?.pedidosOnlinePorFonte) ? dados.pedidosOnlinePorFonte : [];
+  for (const item of pedidosOnlinePorFonte) {
+    linhas.push(["online_fonte", item.source || "-", item.valor_total || 0].map(csvEscape).join(";"));
+    linhas.push(["online_fonte_pedidos", item.source || "-", item.pedidos || 0].map(csvEscape).join(";"));
+  }
+
+  const pedidosOnlinePorForma = Array.isArray(dados?.pedidosOnlinePorFormaPagamento)
+    ? dados.pedidosOnlinePorFormaPagamento
+    : [];
+  for (const item of pedidosOnlinePorForma) {
+    linhas.push(
+      ["online_pagamento", `${item.source || "-"}:${item.payment || "-"}`, item.valor_total || 0]
+        .map(csvEscape)
+        .join(";")
+    );
+    linhas.push(
+      ["online_pagamento_pedidos", `${item.source || "-"}:${item.payment || "-"}`, item.pedidos || 0]
+        .map(csvEscape)
+        .join(";")
+    );
+  }
+
+  const pedidosOnlineDetalhes = Array.isArray(dados?.pedidosOnlineDetalhes) ? dados.pedidosOnlineDetalhes : [];
+  for (const item of pedidosOnlineDetalhes) {
+    linhas.push(
+      [
+        "online_pedido",
+        `${item.source || "-"}:${item.numero || "-"}`,
+        JSON.stringify({
+          data_hora: item.data_hora || "",
+          pagamento: item.payment || "",
+          status: item.status || "",
+          valor_total: Number(item.total || 0),
+          cliente: item.cliente || "",
+          external_id: item.external_id || ""
+        })
+      ]
+        .map(csvEscape)
+        .join(";")
+    );
+  }
+
+  const entregasPorDia = Array.isArray(dados?.entregasPorDia) ? dados.entregasPorDia : [];
+  for (const item of entregasPorDia) {
+    linhas.push(["entregas_dia_total", item.data || "-", item.total || 0].map(csvEscape).join(";"));
+    linhas.push(["entregas_dia_entregues", item.data || "-", item.entregues || 0].map(csvEscape).join(";"));
+    linhas.push(["entregas_dia_cancelados", item.data || "-", item.cancelados || 0].map(csvEscape).join(";"));
+  }
+
   return linhas.join("\n");
 }
 
@@ -189,7 +251,8 @@ function BarCard({
   const maxValor = useMemo(() => {
     return itens.reduce((max, item) => Math.max(max, Number(item.valor || 0)), 0);
   }, [itens]);
-  const usarScroll = Number(maxListaAltura || 0) > 0 && itens.length > 10;
+  const alturaLista = Number(maxListaAltura || 0);
+  const usarScroll = alturaLista > 0;
 
   return (
     <div style={cardStyle}>
@@ -200,9 +263,10 @@ function BarCard({
           ...barListStyle,
           ...(usarScroll
             ? {
-                maxHeight: maxListaAltura,
+                maxHeight: alturaLista,
                 overflowY: "auto",
-                paddingRight: 4
+                paddingRight: 4,
+                scrollbarGutter: "stable"
               }
             : null)
         }}
@@ -372,6 +436,7 @@ export default function Relatorios() {
   const [dados, setDados] = useState(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState("");
+  const [abaRelatorio, setAbaRelatorio] = useState("MESAS");
   const [modalTopProdutosAberto, setModalTopProdutosAberto] = useState(false);
   const [buscaTopProdutos, setBuscaTopProdutos] = useState("");
 
@@ -441,6 +506,19 @@ export default function Relatorios() {
     baixarTexto(nome, gerarCsvRelatorio(dados), "text/csv;charset=utf-8");
   }
 
+  function abaRelatorioButtonStyle(ativo) {
+    return {
+      minHeight: 38,
+      minWidth: 120,
+      borderRadius: 10,
+      border: ativo ? "1px solid #4677ff" : "1px solid #37416a",
+      background: ativo ? "linear-gradient(180deg, #3968f0 0%, #2f5ad5 100%)" : "#1a2141",
+      color: "#fff",
+      fontWeight: 700,
+      cursor: "pointer"
+    };
+  }
+
   const resumo = dados?.resumo || {};
   const periodo = dados?.periodo || {};
   const pagamentosPorForma = Array.isArray(dados?.pagamentosPorForma) ? dados.pagamentosPorForma : [];
@@ -449,6 +527,17 @@ export default function Relatorios() {
   const topProdutos = Array.isArray(dados?.topProdutos) ? dados.topProdutos : [];
   const topCategorias = Array.isArray(dados?.topCategorias) ? dados.topCategorias : [];
   const desempenhoGarcom = Array.isArray(dados?.desempenhoGarcom) ? dados.desempenhoGarcom : [];
+  const pedidosOnlineResumo = dados?.pedidosOnlineResumo || {};
+  const pedidosOnlinePorFonte = Array.isArray(dados?.pedidosOnlinePorFonte) ? dados.pedidosOnlinePorFonte : [];
+  const pedidosOnlinePorFormaPagamento = Array.isArray(dados?.pedidosOnlinePorFormaPagamento)
+    ? dados.pedidosOnlinePorFormaPagamento
+    : [];
+  const pedidosOnlinePorDia = Array.isArray(dados?.pedidosOnlinePorDia) ? dados.pedidosOnlinePorDia : [];
+  const pedidosOnlineTotalRegistros = Number(dados?.pedidosOnlineTotalRegistros || 0);
+  const pedidosOnlineDetalhes = Array.isArray(dados?.pedidosOnlineDetalhes) ? dados.pedidosOnlineDetalhes : [];
+  const entregasPorDia = Array.isArray(dados?.entregasPorDia) ? dados.entregasPorDia : [];
+  const desempenhoMotoboy = Array.isArray(dados?.desempenhoMotoboy) ? dados.desempenhoMotoboy : [];
+  const entregasDiarioMotoboy = Array.isArray(dados?.entregasDiarioMotoboy) ? dados.entregasDiarioMotoboy : [];
   const caixaMovimentos = Array.isArray(dados?.caixaMovimentos) ? dados.caixaMovimentos : [];
   const statusMesas = Array.isArray(dados?.statusMesas) ? dados.statusMesas : [];
   const estoqueBaixo = Array.isArray(dados?.estoqueBaixo) ? dados.estoqueBaixo : [];
@@ -500,6 +589,30 @@ export default function Relatorios() {
     label: item.garcom,
     valor: Number(item.total || 0),
     extra: `${inteiro(item.vendas)} venda(s) | Ticket medio ${moeda(item.ticket_medio)}`
+  }));
+
+  const pedidosOnlineFonteChart = pedidosOnlinePorFonte.map((item) => ({
+    label: nomeFonteOnline(item.source),
+    valor: Number(item.valor_total || 0),
+    extra: `${inteiro(item.pedidos)} pedido(s) | ${inteiro(item.cancelados)} cancelado(s)`
+  }));
+
+  const pedidosOnlinePagamentoChart = pedidosOnlinePorFormaPagamento.map((item) => ({
+    label: `${nomeFonteOnline(item.source)} - ${nomeFormaPagamento(item.payment)}`,
+    valor: Number(item.valor_total || 0),
+    extra: `${inteiro(item.pedidos)} pedido(s) | Ticket ${moeda(item.ticket_medio)}`
+  }));
+
+  const entregasDiaChart = entregasPorDia.map((item) => ({
+    label: new Date(`${item.data}T12:00:00`).toLocaleDateString("pt-BR"),
+    valor: Number(item.total || 0),
+    extra: `${inteiro(item.entregues)} entregue(s) | ${inteiro(item.cancelados)} cancelado(s)`
+  }));
+
+  const motoboyChart = desempenhoMotoboy.map((item) => ({
+    label: item.motoboy,
+    valor: Number(item.total || 0),
+    extra: `${inteiro(item.atribuidos)} atribuido(s) | ${inteiro(item.entregues)} entregue(s)`
   }));
 
   const comparativo = dados?.comparativo || {};
@@ -599,21 +712,241 @@ export default function Relatorios() {
 
       {!carregando && (
         <>
-          <div style={kpiGridStyle}>
-            <KpiCard label="Faturamento total" value={moeda(resumo.faturamento_total)} />
-            <KpiCard label="Subtotal produtos" value={moeda(resumo.subtotal_produtos)} />
-            <KpiCard label="Taxa de servico" value={moeda(resumo.taxa_servico_total)} />
-            <KpiCard label="Couvert artistico" value={moeda(resumo.couvert_total)} />
-            <KpiCard label="Vendas" value={inteiro(resumo.vendas)} />
-            <KpiCard label="Ticket medio" value={moeda(resumo.ticket_medio)} />
-            <KpiCard label="Itens vendidos" value={inteiro(resumo.itens_vendidos)} />
-            <KpiCard label="Pessoas atendidas" value={inteiro(resumo.pessoas_atendidas)} />
-            <KpiCard
-              label="Tempo medio por conta"
-              value={`${Number(resumo.tempo_medio_minutos || 0).toLocaleString("pt-BR")} min`}
-            />
-            <KpiCard label="Pedidos com couvert" value={inteiro(resumo.pedidos_com_couvert)} />
+          <div style={relatorioTabsWrapStyle}>
+            <button
+              type="button"
+              style={abaRelatorioButtonStyle(abaRelatorio === "MESAS")}
+              onClick={() => setAbaRelatorio("MESAS")}
+            >
+              Mesas
+            </button>
+            <button
+              type="button"
+              style={abaRelatorioButtonStyle(abaRelatorio === "ONLINE")}
+              onClick={() => setAbaRelatorio("ONLINE")}
+            >
+              Online
+            </button>
           </div>
+
+          {abaRelatorio === "MESAS" && (
+            <div style={kpiGridStyle}>
+              <KpiCard label="Faturamento total" value={moeda(resumo.faturamento_total)} />
+              <KpiCard label="Subtotal produtos" value={moeda(resumo.subtotal_produtos)} />
+              <KpiCard label="Taxa de servico" value={moeda(resumo.taxa_servico_total)} />
+              <KpiCard label="Couvert artistico" value={moeda(resumo.couvert_total)} />
+              <KpiCard label="Vendas" value={inteiro(resumo.vendas)} />
+              <KpiCard label="Ticket medio" value={moeda(resumo.ticket_medio)} />
+              <KpiCard label="Itens vendidos" value={inteiro(resumo.itens_vendidos)} />
+              <KpiCard label="Pessoas atendidas" value={inteiro(resumo.pessoas_atendidas)} />
+              <KpiCard
+                label="Tempo medio por conta"
+                value={`${Number(resumo.tempo_medio_minutos || 0).toLocaleString("pt-BR")} min`}
+              />
+              <KpiCard label="Pedidos com couvert" value={inteiro(resumo.pedidos_com_couvert)} />
+            </div>
+          )}
+
+          {abaRelatorio === "ONLINE" && (
+            <>
+              <div style={cardStyle}>
+                <h3 style={{ marginTop: 0 }}>Online (iFood e 99)</h3>
+                <div style={kpiGridStyle}>
+                  <KpiCard label="Pedidos online" value={inteiro(pedidosOnlineResumo.pedidos)} />
+                  <KpiCard label="Valor total online" value={moeda(pedidosOnlineResumo.valor_total)} />
+                  <KpiCard label="Ticket medio online" value={moeda(pedidosOnlineResumo.ticket_medio)} />
+                  <KpiCard label="Cancelados online" value={inteiro(pedidosOnlineResumo.cancelados)} />
+                </div>
+              </div>
+
+              <div style={grid2Style}>
+                <BarCard
+                  titulo="Online por canal"
+                  itens={pedidosOnlineFonteChart}
+                  emptyText="Sem pedidos online (iFood/99) no periodo."
+                  formatadorValor={moeda}
+                  color="#5ec9ff"
+                  maxListaAltura={320}
+                />
+                <BarCard
+                  titulo="Online por forma de pagamento"
+                  itens={pedidosOnlinePagamentoChart}
+                  emptyText="Sem formas de pagamento online no periodo."
+                  formatadorValor={moeda}
+                  color="#69d089"
+                  maxListaAltura={320}
+                />
+              </div>
+
+              <div style={cardStyle}>
+                <h3 style={{ marginTop: 0 }}>Diario online por canal</h3>
+                <div style={{ color: "#9fb0e3", fontSize: 12 }}>
+                  Valores e quantidade de pedidos por dia para iFood e 99 Food.
+                </div>
+                <div
+                  style={{
+                    ...tableWrapStyle,
+                    maxHeight: 320,
+                    overflow: "auto",
+                    border: "1px solid #2f3861",
+                    borderRadius: 12
+                  }}
+                >
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Data</th>
+                        <th style={thStyle}>Canal</th>
+                        <th style={thStyle}>Pedidos</th>
+                        <th style={thStyle}>Valor total</th>
+                        <th style={thStyle}>Ticket medio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pedidosOnlinePorDia.map((item, idx) => {
+                        const pedidos = Number(item.pedidos || 0);
+                        const valorTotal = Number(item.valor_total || 0);
+                        return (
+                          <tr key={`online-dia-${item.data}-${item.source}-${idx}`}>
+                            <td style={tdStyle}>{new Date(`${item.data}T12:00:00`).toLocaleDateString("pt-BR")}</td>
+                            <td style={tdStyle}>{nomeFonteOnline(item.source)}</td>
+                            <td style={tdStyle}>{inteiro(pedidos)}</td>
+                            <td style={tdStyle}>{moeda(valorTotal)}</td>
+                            <td style={tdStyle}>{pedidos > 0 ? moeda(valorTotal / pedidos) : moeda(0)}</td>
+                          </tr>
+                        );
+                      })}
+                      {pedidosOnlinePorDia.length < 1 && (
+                        <tr>
+                          <td style={tdStyle} colSpan={5}>
+                            Nenhum pedido online encontrado no periodo.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div style={cardStyle}>
+                <h3 style={{ marginTop: 0 }}>Pedidos online detalhados</h3>
+                <div style={{ color: "#9fb0e3", fontSize: 12 }}>
+                  Mostrando os ultimos {inteiro(pedidosOnlineDetalhes.length)} pedido(s) no periodo.
+                  {pedidosOnlineTotalRegistros > pedidosOnlineDetalhes.length
+                    ? ` Total no periodo: ${inteiro(pedidosOnlineTotalRegistros)}.`
+                    : ""}
+                </div>
+                <div
+                  style={{
+                    ...tableWrapStyle,
+                    maxHeight: 340,
+                    overflow: "auto",
+                    border: "1px solid #2f3861",
+                    borderRadius: 12
+                  }}
+                >
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Data/hora</th>
+                        <th style={thStyle}>Pedido</th>
+                        <th style={thStyle}>Canal</th>
+                        <th style={thStyle}>Pagamento</th>
+                        <th style={thStyle}>Status</th>
+                        <th style={thStyle}>Valor</th>
+                        <th style={thStyle}>Cliente</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pedidosOnlineDetalhes.map((item, idx) => (
+                        <tr key={`online-det-${item.id || item.numero}-${idx}`}>
+                          <td style={tdStyle}>{formatDateTimePtBr(item.data_hora || item.data)}</td>
+                          <td style={tdStyle}>{item.numero || "-"}</td>
+                          <td style={tdStyle}>{nomeFonteOnline(item.source)}</td>
+                          <td style={tdStyle}>{nomeFormaPagamento(item.payment)}</td>
+                          <td style={tdStyle}>{item.status || "-"}</td>
+                          <td style={tdStyle}>{moeda(item.total)}</td>
+                          <td style={tdStyle}>{item.cliente || "-"}</td>
+                        </tr>
+                      ))}
+                      {pedidosOnlineDetalhes.length < 1 && (
+                        <tr>
+                          <td style={tdStyle} colSpan={7}>
+                            Nenhum pedido online detalhado encontrado no periodo.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div style={grid2Style}>
+                <BarCard
+                  titulo="Entregas por dia (motoboy)"
+                  itens={entregasDiaChart}
+                  emptyText="Sem entregas no periodo."
+                  formatadorValor={inteiro}
+                  color="#8a8dff"
+                  maxListaAltura={320}
+                />
+                <BarCard
+                  titulo="Desempenho por motoboy (entregas)"
+                  itens={motoboyChart}
+                  emptyText="Sem dados de motoboy no periodo."
+                  formatadorValor={inteiro}
+                  color="#f2a640"
+                  maxListaAltura={320}
+                />
+              </div>
+
+              <div style={cardStyle}>
+                <h3 style={{ marginTop: 0 }}>Relatorio diario de motoboy</h3>
+                <div
+                  style={{
+                    ...tableWrapStyle,
+                    maxHeight: 320,
+                    overflow: "auto",
+                    border: "1px solid #2f3861",
+                    borderRadius: 12
+                  }}
+                >
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Data</th>
+                        <th style={thStyle}>Motoboy</th>
+                        <th style={thStyle}>Total</th>
+                        <th style={thStyle}>Entregues</th>
+                        <th style={thStyle}>Cancelados</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entregasDiarioMotoboy.map((item, idx) => (
+                        <tr key={`ent-dia-motoboy-${item.data}-${item.motoboy}-${idx}`}>
+                          <td style={tdStyle}>{new Date(`${item.data}T12:00:00`).toLocaleDateString("pt-BR")}</td>
+                          <td style={tdStyle}>{item.motoboy || "Sem motoboy"}</td>
+                          <td style={tdStyle}>{inteiro(item.total)}</td>
+                          <td style={tdStyle}>{inteiro(item.entregues)}</td>
+                          <td style={tdStyle}>{inteiro(item.cancelados)}</td>
+                        </tr>
+                      ))}
+                      {entregasDiarioMotoboy.length < 1 && (
+                        <tr>
+                          <td style={tdStyle} colSpan={5}>
+                            Nenhum registro de motoboy no periodo.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {abaRelatorio === "MESAS" && (
+            <>
 
           <div style={grid2Style}>
             <BarCard
@@ -629,7 +962,7 @@ export default function Relatorios() {
               emptyText="Sem vendas no periodo."
               formatadorValor={moeda}
               color="#14a86e"
-              maxListaAltura={520}
+              maxListaAltura={460}
             />
           </div>
 
@@ -649,7 +982,7 @@ export default function Relatorios() {
               emptyText="Sem categorias no periodo."
               formatadorValor={moeda}
               color="#7b8cff"
-              maxListaAltura={520}
+              maxListaAltura={460}
             />
           </div>
 
@@ -660,7 +993,7 @@ export default function Relatorios() {
               emptyText="Sem vendas fechadas por garcom no periodo."
               formatadorValor={moeda}
               color="#4fc4ff"
-              maxListaAltura={520}
+              maxListaAltura={460}
             />
             <BarCard
               titulo="Vendas por hora"
@@ -825,6 +1158,8 @@ export default function Relatorios() {
           </div>
         </>
       )}
+        </>
+      )}
 
       <TopProdutosModal
         aberto={modalTopProdutosAberto}
@@ -871,6 +1206,13 @@ const erroBoxStyle = {
   background: "#41161c",
   borderRadius: 12,
   padding: "8px 10px"
+};
+
+const relatorioTabsWrapStyle = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+  alignItems: "center"
 };
 
 const kpiGridStyle = {

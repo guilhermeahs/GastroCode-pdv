@@ -50,6 +50,157 @@ function pagamentoAceitaTroco(payment) {
   return normalizePaymentRaw(payment) === "DINHEIRO";
 }
 
+function podeCancelarManualNoSistema(pedido = {}) {
+  const source = String(pedido?.source || "")
+    .trim()
+    .toUpperCase();
+  if (source !== "IFOOD") return false;
+  if (Boolean(pedido?.resumoVisual?.cancelado)) return false;
+  const status = String(pedido?.status || "")
+    .trim()
+    .toUpperCase();
+  if (isStatusCancelado(status)) return false;
+  const externalId = String(pedido?.externalId || pedido?.external_id || "").trim();
+  return Boolean(externalId);
+}
+
+function podeConfirmarManualNoSistema(pedido = {}) {
+  const source = String(pedido?.source || "")
+    .trim()
+    .toUpperCase();
+  if (source !== "IFOOD") return false;
+  if (Boolean(pedido?.resumoVisual?.cancelado)) return false;
+  const status = String(pedido?.status || "")
+    .trim()
+    .toUpperCase();
+  if (isStatusCancelado(status)) return false;
+  if (
+    status.includes("CONFIRM") ||
+    status === "ACCEPTED" ||
+    status === "APPROVED" ||
+    status.includes("PREPAR") ||
+    status.includes("READY") ||
+    status.includes("DISPATCH") ||
+    status.includes("ROUTE") ||
+    status.includes("ON_THE_WAY") ||
+    status.includes("DELIVER") ||
+    status.includes("CONCLUDED") ||
+    status.includes("FINISHED") ||
+    status.includes("COMPLETED")
+  ) {
+    return false;
+  }
+  const externalId = String(pedido?.externalId || pedido?.external_id || "").trim();
+  return Boolean(externalId);
+}
+
+const CANCELAMENTO_FALLBACK_OPTIONS = [
+  {
+    code: "OUT_OF_STOCK",
+    label: "Item indisponivel",
+    subreasons: [
+      { code: "MAIN_ITEM_UNAVAILABLE", label: "Item principal indisponivel" },
+      { code: "COMPLEMENT_UNAVAILABLE", label: "Complemento indisponivel" }
+    ]
+  },
+  {
+    code: "STORE_CLOSED",
+    label: "Loja fechada",
+    subreasons: [
+      { code: "OUTSIDE_OPENING_HOURS", label: "Fora do horario de funcionamento" },
+      { code: "UNEXPECTED_CLOSURE", label: "Fechamento inesperado" }
+    ]
+  },
+  {
+    code: "DELIVERY_AREA_UNAVAILABLE",
+    label: "Area de entrega indisponivel",
+    subreasons: [
+      { code: "AREA_BLOCKED", label: "Area temporariamente bloqueada" },
+      { code: "NO_COURIER", label: "Sem entregador disponivel" }
+    ]
+  },
+  {
+    code: "OPERATIONAL_ISSUE",
+    label: "Problema operacional",
+    subreasons: [
+      { code: "SYSTEM_ISSUE", label: "Instabilidade no sistema" },
+      { code: "PRODUCTION_DELAY", label: "Atraso de producao" }
+    ]
+  },
+  {
+    code: "CUSTOMER_REQUEST",
+    label: "Solicitacao do cliente",
+    subreasons: [
+      { code: "WRONG_ADDRESS", label: "Endereco incorreto" },
+      { code: "CUSTOMER_GAVE_UP", label: "Cliente desistiu do pedido" }
+    ]
+  }
+];
+
+function normalizeCancelSubreasonOption(entry, idx) {
+  const row = entry && typeof entry === "object" ? entry : {};
+  const code = String(row.code || row.reasonCode || row.id || entry || "").trim().slice(0, 120);
+  const label = String(row.label || row.name || row.description || code || "").trim().slice(0, 180);
+  const safeCode = code || `SUBREASON_${idx + 1}`;
+  const safeLabel = label || safeCode;
+  return {
+    code: safeCode,
+    label: safeLabel
+  };
+}
+
+function normalizeCancelReasonOption(entry, idx) {
+  const row = entry && typeof entry === "object" ? entry : {};
+  const code = String(row.code || row.reasonCode || row.id || entry || "").trim().slice(0, 120);
+  const label = String(row.label || row.name || row.description || code || "").trim().slice(0, 180);
+  const safeCode = code || `REASON_${idx + 1}`;
+  const safeLabel = label || safeCode;
+  const rawSub = Array.isArray(row.subreasons)
+    ? row.subreasons
+    : Array.isArray(row.subReasons)
+      ? row.subReasons
+      : Array.isArray(row.children)
+        ? row.children
+        : [];
+  const dedupeSub = new Set();
+  const subreasons = rawSub
+    .map((item, subIdx) => normalizeCancelSubreasonOption(item, subIdx))
+    .filter((item) => {
+      const key = String(item.code || "").trim().toUpperCase();
+      if (!key) return false;
+      if (dedupeSub.has(key)) return false;
+      dedupeSub.add(key);
+      return true;
+    });
+  return {
+    code: safeCode,
+    label: safeLabel,
+    subreasons
+  };
+}
+
+function normalizeCancelOptionsList(payload) {
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.reasons)
+        ? payload.reasons
+        : [];
+  const dedupe = new Set();
+  const items = rows
+    .map((item, idx) => normalizeCancelReasonOption(item, idx))
+    .filter((item) => {
+      const key = String(item.code || "").trim().toUpperCase();
+      if (!key) return false;
+      if (dedupe.has(key)) return false;
+      dedupe.add(key);
+      return true;
+    });
+  if (items.length > 0) return items;
+  return CANCELAMENTO_FALLBACK_OPTIONS.map((item, idx) => normalizeCancelReasonOption(item, idx));
+}
+
 function normalizePaymentRaw(value) {
   const key = String(value || "")
     .trim()
@@ -109,13 +260,56 @@ function isStatusCancelado(status = "") {
   return /(CANCEL|CANCELED|CANCELLED|REJECT|DENIED|DECLINED)/.test(txt);
 }
 
-function nomeStatusEntrega(status = "", cancelado = false) {
+function parseIsoMs(value) {
+  const txt = String(value || "").trim();
+  if (!txt) return Number.NaN;
+  const parsed = new Date(txt).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function getAgendamentoBloqueioPedido(pedido = {}) {
+  const resumo = pedido?.resumoVisual && typeof pedido.resumoVisual === "object" ? pedido.resumoVisual : {};
+  const scheduledStart = String(resumo?.agendadoInicio || resumo?.agendadoEm || "").trim();
+  const statusRaw = String(pedido?.statusRaw || pedido?.status || "")
+    .trim()
+    .toUpperCase();
+  const statusBloqueia =
+    statusRaw === "RECEIVED" ||
+    statusRaw === "PLACED" ||
+    statusRaw === "CREATED" ||
+    statusRaw === "PENDING" ||
+    statusRaw === "SCHEDULED";
+  if (!resumo?.agendado || !scheduledStart || !statusBloqueia) {
+    return {
+      blocked: false,
+      untilIso: scheduledStart
+    };
+  }
+  const startTs = parseIsoMs(scheduledStart);
+  if (!Number.isFinite(startTs)) {
+    return {
+      blocked: false,
+      untilIso: scheduledStart
+    };
+  }
+  const blocked = startTs > Date.now() + 15000;
+  return {
+    blocked,
+    untilIso: scheduledStart
+  };
+}
+
+function nomeStatusEntrega(status = "", cancelado = false, options = {}) {
   const raw = String(status || "")
     .trim()
     .toUpperCase();
+  const scheduled = Boolean(options?.scheduled);
 
   if (cancelado || isStatusCancelado(raw)) return "Cancelado";
-  if (!raw || raw === "RECEIVED" || raw === "PLACED" || raw === "CREATED") return "Recebido";
+  if (!raw || raw === "RECEIVED" || raw === "PLACED" || raw === "CREATED") {
+    return scheduled ? "Agendado" : "Recebido";
+  }
+  if (scheduled && (raw === "PENDING" || raw === "SCHEDULED")) return "Agendado";
   if (raw === "PENDING") return "Aguardando aceite";
   if (raw.includes("CONFIRM") || raw === "ACCEPTED" || raw === "APPROVED") return "Confirmado";
   if (
@@ -136,20 +330,457 @@ function nomeStatusEntrega(status = "", cancelado = false) {
   return raw.replace(/_/g, " ");
 }
 
+function formatScheduleWindow(inicio = "", fim = "") {
+  const start = String(inicio || "").trim();
+  const end = String(fim || "").trim();
+  if (start && end) return `${formatDateTimePtBr(start)} ate ${formatDateTimePtBr(end)}`;
+  if (start) return formatDateTimePtBr(start);
+  if (end) return formatDateTimePtBr(end);
+  return "Nao";
+}
+
 function normalizeNotesText(value) {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeNotesText(item))
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join(" | ")
+      .trim();
+  }
   if (typeof value === "object") {
     const message = String(
-      value?.message || value?.text || value?.description || value?.note || ""
+      value?.message ||
+        value?.text ||
+        value?.description ||
+        value?.note ||
+        value?.notes ||
+        value?.observation ||
+        value?.observations ||
+        value?.instruction ||
+        value?.instructions ||
+        ""
     ).trim();
     if (message) return message;
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return "";
+    return "";
+  }
+  return "";
+}
+
+function sanitizeObservacaoText(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^\[object Object\]$/i.test(text)) return "";
+  const tecnicoLike =
+    /deliveryproduct|logisticprovider|cartid|\"metadata\"|\"merchant\"|\"self_delivery\"/i.test(text) &&
+    /^[\[\{]/.test(text);
+  if (tecnicoLike) return "";
+  return text;
+}
+
+function pickText(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "object") {
+      const obj = value || {};
+      const nestedValues = [
+        obj.text,
+        obj.message,
+        obj.description,
+        obj.note,
+        obj.value,
+        obj.number,
+        obj.phoneNumber,
+        obj.email,
+        obj.name
+      ];
+      for (const nested of nestedValues) {
+        if (nested === undefined || nested === null || typeof nested === "object") continue;
+        const nestedTxt = String(nested).trim();
+        if (nestedTxt) return nestedTxt;
+      }
+      continue;
     }
+    const txt = String(value).trim();
+    if (txt) return txt;
+  }
+  return "";
+}
+
+function formatarAdicionalItem(item = {}, contexto = "") {
+  if (item === undefined || item === null) return "";
+  if (typeof item !== "object") {
+    const textoSimples = sanitizeObservacaoText(normalizeNotesText(item));
+    return contexto && textoSimples ? `${contexto}: ${textoSimples}` : textoSimples;
+  }
+
+  const grupo = pickText(item?.groupName, item?.group, item?.category, item?.categoryName, item?.optionGroup, item?.titleGroup);
+  const nome = pickText(item?.name, item?.title, item?.label, item?.description, item?.text, item?.value, item?.option, item?.itemName);
+  const quantidade = Number(item?.quantity ?? item?.qty ?? item?.amount ?? item?.count ?? item?.pieces ?? 0) || 0;
+  const total = toMoney(item?.total ?? item?.priceTotal ?? item?.subtotal, 0);
+  const unit = toMoney(item?.unitPrice ?? item?.price ?? item?.value, 0);
+  const valor = total > 0 ? total : unit > 0 ? unit : 0;
+  const observacao = sanitizeObservacaoText(
+    normalizeNotesText(item?.observation || item?.notes || item?.comment || item?.note)
+  );
+
+  const base = grupo && nome ? `${grupo}: ${nome}` : nome || grupo || "";
+  const partes = [];
+  if (base) partes.push(base);
+  if (quantidade > 1) partes.push(`x${quantidade}`);
+  if (valor > 0) partes.push(`+ ${moneyBr(valor)}`);
+  if (observacao && observacao.toLowerCase() !== base.toLowerCase()) partes.push(observacao);
+
+  const texto = partes.join(" | ").trim();
+  return contexto && texto ? `${contexto}: ${texto}` : texto;
+}
+
+function extrairAdicionaisItem(item = {}) {
+  const seen = new Set();
+  const linhas = [];
+
+  const pushLinha = (valor) => {
+    const texto = sanitizeObservacaoText(normalizeNotesText(valor));
+    if (!texto) return;
+    const chave = texto.toLowerCase();
+    if (seen.has(chave)) return;
+    seen.add(chave);
+    linhas.push(texto);
+  };
+
+  const nestedKeys = [
+    "items",
+    "options",
+    "modifiers",
+    "addons",
+    "adicionais",
+    "extras",
+    "children",
+    "choices",
+    "selectedOptions",
+    "complements",
+    "complementos",
+    "customizations",
+    "variations"
+  ];
+
+  const visit = (node, contexto = "") => {
+    if (node === undefined || node === null) return;
+    if (Array.isArray(node)) {
+      node.forEach((entry) => visit(entry, contexto));
+      return;
+    }
+
+    if (typeof node !== "object") {
+      const texto = sanitizeObservacaoText(normalizeNotesText(node));
+      if (texto) pushLinha(contexto ? `${contexto}: ${texto}` : texto);
+      return;
+    }
+
+    const linha = formatarAdicionalItem(node, contexto);
+    if (linha) pushLinha(linha);
+
+    const grupo = pickText(node?.groupName, node?.group, node?.category, node?.categoryName, node?.optionGroup, node?.titleGroup);
+    const nome = pickText(node?.name, node?.title, node?.label, node?.description, node?.text, node?.value, node?.option, node?.itemName);
+    const proximoContexto = grupo && nome ? `${grupo}` : grupo || nome || contexto || "";
+
+    for (const key of nestedKeys) {
+      if (Array.isArray(node?.[key])) {
+        visit(node[key], proximoContexto);
+      }
+    }
+  };
+
+  const campos = [
+    item?.adicionais,
+    item?.adicional,
+    item?.addons,
+    item?.addOns,
+    item?.extras,
+    item?.extra,
+    item?.options,
+    item?.modifiers,
+    item?.modifierGroups,
+    item?.complements,
+    item?.complementos,
+    item?.toppings,
+    item?.selectedOptions,
+    item?.choices,
+    item?.customizations,
+    item?.children
+  ];
+
+  campos.forEach((campo) => visit(campo));
+
+  return linhas;
+}
+
+function tentarSepararNomeAdicional(nome = "", quantidade = 1, unit = 0, total = 0) {
+  const txt = String(nome || "").trim();
+  if (!txt) return { nomeBase: txt, adicionais: [] };
+
+  const esperado = Number((Number(unit || 0) * Number(quantidade || 1)).toFixed(2));
+  const diff = Number((Number(total || 0) - esperado).toFixed(2));
+  if (diff <= 0.01) return { nomeBase: txt, adicionais: [] };
+
+  const separators = [" - ", " + ", " / "];
+  for (const sep of separators) {
+    const idx = txt.lastIndexOf(sep);
+    if (idx <= 0) continue;
+    const base = txt.slice(0, idx).trim();
+    const extra = txt.slice(idx + sep.length).trim();
+    if (!base || !extra) continue;
+    if (base.length < 3 || extra.length < 2) continue;
+    if (extra.length > 40) continue;
+    if (!/[A-Za-z]/.test(extra)) continue;
+    return { nomeBase: base, adicionais: [extra] };
+  }
+
+  return { nomeBase: txt, adicionais: [] };
+}
+
+function formatarDocumentoCliente(valor) {
+  const txt = String(valor || "").trim();
+  if (!txt) return "";
+
+  const digits = txt.replace(/\D/g, "");
+  if (digits.length === 11) {
+    return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  }
+  if (digits.length === 14) {
+    return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+  }
+
+  return txt;
+}
+
+function rotuloDocumentoCliente(valor) {
+  const txt = String(valor || "").trim();
+  const digits = txt.replace(/\D/g, "");
+  if (digits.length === 11) return "CPF";
+  if (digits.length === 14) return "CNPJ";
+  return "Documento";
+}
+
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function extractEnderecoPedido(rawOrder = {}) {
+  const delivery = rawOrder?.delivery && typeof rawOrder.delivery === "object" ? rawOrder.delivery : {};
+  const address =
+    (delivery?.deliveryAddress && typeof delivery.deliveryAddress === "object" ? delivery.deliveryAddress : null) ||
+    (delivery?.address && typeof delivery.address === "object" ? delivery.address : null) ||
+    (rawOrder?.deliveryAddress && typeof rawOrder.deliveryAddress === "object" ? rawOrder.deliveryAddress : null) ||
+    (rawOrder?.address && typeof rawOrder.address === "object" ? rawOrder.address : null) ||
+    {};
+
+  const linhaPrincipal = pickText(
+    address.formattedAddress,
+    address.fullAddress,
+    address.addressLine,
+    address.displayAddress
+  );
+  const rua = pickText(address.streetName, address.street, address.addressLine1, address.logradouro);
+  const numero = pickText(address.streetNumber, address.number, address.houseNumber, address.numero);
+  const complemento = pickText(address.complement, address.addressLine2, address.complemento);
+  const bairro = pickText(address.neighborhood, address.district, address.bairro);
+  const cidade = pickText(address.city, address.town, address.cidade);
+  const uf = pickText(address.state, address.region, address.uf);
+  const cep = pickText(address.postalCode, address.zipCode, address.cep);
+  const referencia = pickText(
+    address.reference,
+    address.referencePoint,
+    delivery.reference,
+    rawOrder?.reference
+  );
+
+  const linhaRua = [rua, numero ? `, ${numero}` : "", complemento ? ` - ${complemento}` : ""]
+    .join("")
+    .trim();
+  const linhaCidade = [bairro, cidade, uf].filter(Boolean).join(" - ");
+
+  return {
+    linhaPrincipal,
+    linhaRua,
+    linhaCidade,
+    cep,
+    referencia,
+    hasAny: Boolean(linhaPrincipal || linhaRua || linhaCidade || cep || referencia)
+  };
+}
+
+function normalizeItensPedido(resumo = {}, rawOrder = {}) {
+  const itensResumo = toArray(resumo?.items);
+  const itensRaw =
+    toArray(rawOrder?.items).length > 0
+      ? toArray(rawOrder.items)
+      : toArray(rawOrder?.orderItems).length > 0
+        ? toArray(rawOrder.orderItems)
+        : toArray(rawOrder?.cart?.items).length > 0
+          ? toArray(rawOrder.cart.items)
+          : toArray(rawOrder?.basket?.items);
+
+  const totalRows = Math.max(itensResumo.length, itensRaw.length);
+  const base =
+    totalRows > 0
+      ? Array.from({ length: totalRows }, (_, idx) => {
+          const itemResumo = itensResumo[idx] && typeof itensResumo[idx] === "object" ? itensResumo[idx] : {};
+          const itemRaw = itensRaw[idx] && typeof itensRaw[idx] === "object" ? itensRaw[idx] : {};
+          return {
+            ...itemResumo,
+            ...itemRaw
+          };
+        })
+      : [];
+
+  return base
+    .map((item, idx) => {
+      const quantidade = Math.max(
+        1,
+        Number(item?.quantidade ?? item?.quantity ?? item?.qty ?? item?.amount ?? 1) || 1
+      );
+      const nomeOriginal = pickText(item?.nome, item?.name, item?.description, item?.title, item?.sku) || `Item ${idx + 1}`;
+      const unit = toMoney(item?.preco_unitario ?? item?.unitPrice ?? item?.price ?? item?.value, 0);
+      const total = toMoney(
+        item?.total ?? item?.totalPrice ?? item?.priceTotal,
+        unit > 0 ? unit * quantidade : 0
+      );
+      const observacao = sanitizeObservacaoText(
+        normalizeNotesText(
+          pickText(
+            item?.observacao,
+            item?.observation,
+            item?.observations,
+            item?.notes,
+            item?.comment,
+            item?.note,
+            item?.instructions,
+            item?.specialInstructions,
+            item?.customerNotes,
+            item?.customerNote,
+            item?.additionalInfo
+          )
+        )
+      );
+      let adicionais = extrairAdicionaisItem(item);
+      let nome = nomeOriginal;
+
+      if (adicionais.length < 1) {
+        const tentativa = tentarSepararNomeAdicional(nomeOriginal, quantidade, unit, total);
+        nome = tentativa.nomeBase || nomeOriginal;
+        adicionais = tentativa.adicionais;
+      }
+
+      return {
+        nome,
+        quantidade,
+        unit,
+        total,
+        observacao,
+        adicionais
+      };
+    })
+    .filter((item) => item.nome);
+}
+
+function normalizeTotaisPedido(resumo = {}, rawOrder = {}, itens = []) {
+  const totals = resumo?.totals && typeof resumo.totals === "object" ? resumo.totals : {};
+  const subtotalFromItens = itens.reduce((acc, item) => acc + Number(item?.total || 0), 0);
+  const subtotal = toMoney(totals?.subtotal, subtotalFromItens);
+  const desconto = toMoney(
+    totals?.discount,
+    pickText(rawOrder?.total?.discountAmount, rawOrder?.total?.discount, rawOrder?.total?.benefitsAmount) || 0
+  );
+  const taxaEntrega = toMoney(
+    pickText(
+      rawOrder?.total?.deliveryFee,
+      rawOrder?.total?.deliveryCost,
+      rawOrder?.delivery?.deliveryFee,
+      rawOrder?.deliveryFee
+    ),
+    0
+  );
+  const taxaServico = toMoney(
+    pickText(
+      rawOrder?.total?.serviceFee,
+      rawOrder?.total?.serviceTax,
+      rawOrder?.serviceFee,
+      rawOrder?.serviceTax
+    ),
+    0
+  );
+  const total = toMoney(
+    totals?.total,
+    pickText(rawOrder?.total?.orderAmount, rawOrder?.total?.total, rawOrder?.orderAmount) || subtotal + taxaEntrega + taxaServico - desconto
+  );
+  return {
+    subtotal,
+    desconto,
+    taxaEntrega,
+    taxaServico,
+    total
+  };
+}
+
+function extractContatoPedido(resumo = {}, rawOrder = {}) {
+  const customer = rawOrder?.customer && typeof rawOrder.customer === "object" ? rawOrder.customer : {};
+  const delivery = rawOrder?.delivery && typeof rawOrder.delivery === "object" ? rawOrder.delivery : {};
+  const contact = rawOrder?.contact && typeof rawOrder.contact === "object" ? rawOrder.contact : {};
+  const firstPhoneObj = toArray(customer?.phones)[0] || {};
+  const phone = pickText(
+    customer?.phone,
+    customer?.phoneNumber,
+    customer?.phone?.number,
+    customer?.phone?.phoneNumber,
+    contact?.phone,
+    contact?.phoneNumber,
+    contact?.phone?.number,
+    contact?.phone?.phoneNumber,
+    firstPhoneObj?.number,
+    firstPhoneObj?.phoneNumber,
+    delivery?.phone?.number,
+    delivery?.phoneNumber,
+    delivery?.contactPhone
+  );
+  const email = pickText(customer?.email, contact?.email, delivery?.email);
+  return {
+    telefone: phone,
+    email,
+    hasAny: Boolean(phone || email || resumo?.customer_name)
+  };
+}
+
+function extractObservacoesPedido(resumo = {}, rawOrder = {}) {
+  const candidates = [
+    resumo?.notes,
+    resumo?.observacao,
+    resumo?.observations,
+    resumo?.customer?.notes,
+    resumo?.customer?.observation,
+    resumo?.customer?.observations,
+    rawOrder?.observation,
+    rawOrder?.observations,
+    rawOrder?.comment,
+    rawOrder?.comments,
+    rawOrder?.instructions,
+    rawOrder?.specialInstructions,
+    rawOrder?.additionalInfo,
+    rawOrder?.delivery?.observation,
+    rawOrder?.delivery?.observations,
+    rawOrder?.delivery?.instructions,
+    rawOrder?.delivery?.notes,
+    rawOrder?.customer?.notes,
+    rawOrder?.customer?.observation,
+    rawOrder?.customer?.observations
+  ];
+  for (const candidate of candidates) {
+    const text = sanitizeObservacaoText(normalizeNotesText(candidate));
+    if (!text) continue;
+    return text;
   }
   return "";
 }
@@ -164,6 +795,21 @@ function normalizePedidoEntrega(pedido = {}) {
   const cancellation = resumo.cancellation && typeof resumo.cancellation === "object" ? resumo.cancellation : {};
   const rawMethods = Array.isArray(rawOrder?.payments?.methods) ? rawOrder.payments.methods : [];
   const rawFirstMethod = rawMethods[0] || {};
+  const rawMethodsNormalized = rawMethods
+    .map((method) => ({
+      method: normalizePaymentRaw(method?.method || method?.type || ""),
+      amount: toMoney(method?.value ?? method?.amount, 0)
+    }))
+    .filter((row) => row.method);
+  const resumoPayments = Array.isArray(resumo?.payments)
+    ? resumo.payments
+        .map((method) => ({
+          method: normalizePaymentRaw(method?.method || ""),
+          amount: toMoney(method?.amount, 0)
+        }))
+        .filter((row) => row.method)
+    : [];
+  const pagamentosNotinha = resumoPayments.length > 0 ? resumoPayments : rawMethodsNormalized;
   const paymentFromResumo = Array.isArray(resumo?.payments)
     ? normalizePaymentRaw(resumo.payments.find((row) => String(row?.method || "").trim())?.method || "")
     : "";
@@ -188,9 +834,13 @@ function normalizePedidoEntrega(pedido = {}) {
     .toUpperCase();
   const hasScheduledMode = schedulingMode.includes("SCHEDULE");
   const isImmediateMode = schedulingMode.includes("IMMEDIATE") || schedulingMode.includes("ASAP");
-  const scheduledAt = scheduling.scheduled_at ? String(scheduling.scheduled_at) : "";
-  const isScheduled = (Boolean(scheduling.is_scheduled) || hasScheduledMode) && !isImmediateMode;
-  const previsaoEm = !isScheduled && scheduledAt ? scheduledAt : "";
+  const scheduledStart = scheduling.scheduled_window_start ? String(scheduling.scheduled_window_start) : "";
+  const scheduledEnd = scheduling.scheduled_window_end ? String(scheduling.scheduled_window_end) : "";
+  const scheduledAt = scheduling.scheduled_at ? String(scheduling.scheduled_at) : scheduledStart;
+  const deliveryEtaAt = scheduling.delivery_eta_at ? String(scheduling.delivery_eta_at) : "";
+  const hasScheduledWindow = Boolean(scheduledStart || scheduledEnd);
+  const isScheduled = (Boolean(scheduling.is_scheduled) || hasScheduledMode || hasScheduledWindow) && !isImmediateMode;
+  const previsaoEm = !isScheduled ? deliveryEtaAt || scheduledAt : "";
   const voucherCode = String(voucher.code || "").trim();
   const voucherValue = toMoney(voucher.value);
   const trocoPara = toMoney(
@@ -204,7 +854,34 @@ function normalizePedidoEntrega(pedido = {}) {
       rawOrder?.cashChangeFor
   );
   const clienteNome = String(customer.nome || customer.name || resumo.customer_name || "").trim();
-  const clienteDocumento = String(customer.documento || resumo.customer_document || "").trim();
+  const clienteDocumento = String(
+    pickText(
+      customer.documento,
+      customer.document,
+      customer.documentNumber,
+      customer.document_number,
+      customer.cpf,
+      customer.cnpj,
+      customer.cpfCnpj,
+      customer.taxPayerIdentificationNumber,
+      customer.taxpayerIdentificationNumber,
+      resumo.customer_document,
+      resumo.customer_documento,
+      rawOrder?.customer?.documento,
+      rawOrder?.customer?.document,
+      rawOrder?.customer?.documentNumber,
+      rawOrder?.customer?.document_number,
+      rawOrder?.customer?.cpf,
+      rawOrder?.customer?.cnpj,
+      rawOrder?.customer?.cpfCnpj,
+      rawOrder?.invoice?.documentNumber,
+      rawOrder?.invoice?.document,
+      rawOrder?.invoice?.document_number,
+      rawOrder?.invoice?.cpf,
+      rawOrder?.invoice?.cnpj,
+      rawOrder?.invoice?.cpfCnpj
+    )
+  ).trim();
   const cancelReason = String(
     cancellation.reason || rawCancel?.reason || rawCancel?.description || rawCancel?.message || rawOrder?.cancellationReason || ""
   ).trim();
@@ -224,7 +901,21 @@ function normalizePedidoEntrega(pedido = {}) {
     isStatusCancelado(statusRaw) ||
     isStatusCancelado(String(rawOrder?.orderStatus || rawOrder?.status || rawOrder?.state || "")) ||
     /(CANCEL|REJECT|DENIED|DECLINED)/.test(cancelBlob);
-  const statusVisual = nomeStatusEntrega(statusRaw, cancelado);
+  const statusVisual = nomeStatusEntrega(statusRaw, cancelado, {
+    scheduled: isScheduled
+  });
+  const endereco = extractEnderecoPedido(rawOrder);
+  const itens = normalizeItensPedido(resumo, rawOrder);
+  const totais = normalizeTotaisPedido(resumo, rawOrder, itens);
+  const contato = extractContatoPedido(resumo, rawOrder);
+  const observacoes = extractObservacoesPedido(resumo, rawOrder);
+  const despachadoEm = pickText(
+    rawOrder?.dispatching?.dispatchedAt,
+    rawOrder?.dispatching?.dateTime,
+    rawOrder?.delivery?.dispatchDateTime,
+    rawOrder?.delivery?.pickedUpAt,
+    rawOrder?.pickedUpAt
+  );
 
   return {
     ...pedido,
@@ -240,6 +931,8 @@ function normalizePedidoEntrega(pedido = {}) {
       tipoPedido: nomeTipoPedido(resumo.order_type || resumo.orderType || ""),
       agendado: isScheduled,
       agendadoEm: scheduledAt,
+      agendadoInicio: scheduledStart || scheduledAt,
+      agendadoAte: scheduledEnd,
       previsaoEm,
       voucherCode,
       voucherValue,
@@ -247,7 +940,16 @@ function normalizePedidoEntrega(pedido = {}) {
       clienteNome,
       clienteDocumento,
       cancelado,
-      cancelReason: cancelReason || cancelSource
+      cancelReason: cancelReason || cancelSource,
+      observacoes,
+      notinha: {
+        endereco,
+        itens,
+        totais,
+        contato,
+        pagamentos: pagamentosNotinha,
+        despachadoEm
+      }
     }
   };
 }
@@ -644,7 +1346,7 @@ function PedidoResumoBadges({ pedido }) {
       {pedido?.status ? <span style={statusTagStyle}>{pedido.status}</span> : null}
       <span style={metaTagStyle}>{resumo.tipoPedido || "Entrega"}</span>
       {resumo.agendado && resumo.agendadoEm ? (
-        <span style={metaTagStyle}>Agendado: {formatDateTimePtBr(resumo.agendadoEm)}</span>
+        <span style={metaTagStyle}>Agendado: {formatScheduleWindow(resumo.agendadoInicio || resumo.agendadoEm, resumo.agendadoAte)}</span>
       ) : null}
       {resumo.voucherCode || resumo.voucherValue > 0 ? (
         <span style={metaTagStyle}>
@@ -659,10 +1361,39 @@ function PedidoResumoBadges({ pedido }) {
 
 function PedidoDetalhesDialog({ pedido, open, onClose }) {
   if (!open || !pedido) return null;
+  const [mostrarJsonTecnico, setMostrarJsonTecnico] = useState(false);
   const resumo = pedido?.resumoVisual || {};
   const detalhes = pedido?.detalhes || {};
-  const notesText = normalizeNotesText(detalhes?.notes);
+  const notinha = resumo?.notinha && typeof resumo.notinha === "object" ? resumo.notinha : {};
+  const endereco = notinha?.endereco && typeof notinha.endereco === "object" ? notinha.endereco : {};
+  const itens = Array.isArray(notinha?.itens) ? notinha.itens : [];
+  const totais = notinha?.totais && typeof notinha.totais === "object" ? notinha.totais : {};
+  const contato = notinha?.contato && typeof notinha.contato === "object" ? notinha.contato : {};
+  const pagamentos = Array.isArray(notinha?.pagamentos) ? notinha.pagamentos : [];
+  const notesText = sanitizeObservacaoText(
+    resumo?.observacoes || normalizeNotesText(detalhes?.notes) || normalizeNotesText(detalhes?.observation)
+  );
   const trocoAplicavel = pagamentoAceitaTroco(pedido?.payment);
+  const totalItens = itens.reduce((acc, item) => acc + Number(item?.total || 0), 0);
+  const subtotal = Number(totais?.subtotal || 0);
+  const taxaEntrega = Number(totais?.taxaEntrega || 0);
+  const taxaServico = Number(totais?.taxaServico || 0);
+  const desconto = Number(totais?.desconto || 0);
+  const totalFinal = Number(totais?.total || 0);
+  const totalPedido = totalFinal > 0 ? totalFinal : subtotal + taxaEntrega + taxaServico - desconto;
+  const trocoNecessario =
+    trocoAplicavel && resumo.trocoPara > 0 ? Math.max(0, Number((resumo.trocoPara - totalPedido).toFixed(2))) : 0;
+  const cancelReasonTexto = String(resumo.cancelReason || "").trim();
+  const cancelReasonUpper = cancelReasonTexto.toUpperCase();
+  const statusVisualUpper = String(pedido.status || "").trim().toUpperCase();
+  const statusRawUpper = String(pedido.statusRaw || "").trim().toUpperCase();
+  const dataHoraPrincipal = resumo.agendado ? resumo.agendadoInicio || resumo.agendadoEm || pedido.dataISO : pedido.dataISO;
+  const mostrarCampoCancelamento =
+    resumo.cancelado &&
+    Boolean(cancelReasonTexto) &&
+    cancelReasonUpper !== statusVisualUpper &&
+    cancelReasonUpper !== statusRawUpper;
+
   return (
     <div style={pedidoDetalhesOverlayStyle} onClick={onClose}>
       <div style={pedidoDetalhesCardStyle} onClick={(event) => event.stopPropagation()}>
@@ -694,8 +1425,8 @@ function PedidoDetalhesDialog({ pedido, open, onClose }) {
             </strong>
           </div>
           <div style={pedidoDetalhesFieldStyle}>
-            <span style={pedidoDetalhesLabelStyle}>Data/hora</span>
-            <strong>{formatDateTimePtBr(pedido.dataISO)}</strong>
+            <span style={pedidoDetalhesLabelStyle}>{resumo.agendado ? "Data/hora agendada" : "Data/hora"}</span>
+            <strong>{formatDateTimePtBr(dataHoraPrincipal)}</strong>
           </div>
           <div style={pedidoDetalhesFieldStyle}>
             <span style={pedidoDetalhesLabelStyle}>ID externo</span>
@@ -706,10 +1437,10 @@ function PedidoDetalhesDialog({ pedido, open, onClose }) {
             <strong>{resumo.tipoPedido || "-"}</strong>
           </div>
           <div style={pedidoDetalhesFieldStyle}>
-            <span style={pedidoDetalhesLabelStyle}>{resumo.agendado ? "Agendamento" : "Previsao"}</span>
+            <span style={pedidoDetalhesLabelStyle}>{resumo.agendado ? "Agendamento" : "Previsao de entrega"}</span>
             <strong>
               {resumo.agendado
-                ? formatDateTimePtBr(resumo.agendadoEm)
+                ? formatScheduleWindow(resumo.agendadoInicio || resumo.agendadoEm, resumo.agendadoAte)
                 : resumo.previsaoEm
                   ? formatDateTimePtBr(resumo.previsaoEm)
                   : "Nao"}
@@ -731,31 +1462,173 @@ function PedidoDetalhesDialog({ pedido, open, onClose }) {
           </div>
           <div style={pedidoDetalhesFieldStyle}>
             <span style={pedidoDetalhesLabelStyle}>Cliente</span>
-            <strong>
-              {resumo.clienteNome || "-"}
-              {resumo.clienteDocumento ? ` (${resumo.clienteDocumento})` : ""}
+            <strong style={{ display: "grid", gap: 2 }}>
+              <span>{resumo.clienteNome || "-"}</span>
+              {resumo.clienteDocumento ? (
+                <span style={{ fontSize: 12, color: "rgba(220, 230, 255, 0.78)" }}>
+                  {rotuloDocumentoCliente(resumo.clienteDocumento)}: {formatarDocumentoCliente(resumo.clienteDocumento)}
+                </span>
+              ) : null}
             </strong>
           </div>
-          <div style={pedidoDetalhesFieldStyle}>
-            <span style={pedidoDetalhesLabelStyle}>Cancelamento</span>
-            <strong>{resumo.cancelado ? resumo.cancelReason || "Sim" : "Nao"}</strong>
-          </div>
+          {mostrarCampoCancelamento ? (
+            <div style={pedidoDetalhesFieldStyle}>
+              <span style={pedidoDetalhesLabelStyle}>Cancelamento</span>
+              <strong>{cancelReasonTexto}</strong>
+            </div>
+          ) : null}
+          {notinha?.despachadoEm ? (
+            <div style={pedidoDetalhesFieldStyle}>
+              <span style={pedidoDetalhesLabelStyle}>Despachado em</span>
+              <strong>{formatDateTimePtBr(notinha.despachadoEm)}</strong>
+            </div>
+          ) : null}
         </div>
 
+        <div style={pedidoSectionCardStyle}>
+          <strong style={pedidoSectionTitleStyle}>Endereco de entrega</strong>
+          {endereco?.hasAny ? (
+            <div style={{ display: "grid", gap: 4 }}>
+              {endereco.linhaPrincipal ? <span>{endereco.linhaPrincipal}</span> : null}
+              {endereco.linhaRua ? <span>{endereco.linhaRua}</span> : null}
+              {endereco.linhaCidade ? <span>{endereco.linhaCidade}</span> : null}
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", color: "#bed0ff", fontSize: 13 }}>
+                {endereco.cep ? <span>CEP: {endereco.cep}</span> : null}
+                {endereco.referencia ? <span>Referencia: {endereco.referencia}</span> : null}
+              </div>
+            </div>
+          ) : (
+            <span style={{ color: "#9cb0e8", fontSize: 13 }}>Endereco nao informado para este pedido.</span>
+          )}
+        </div>
+
+        <div style={pedidoSectionCardStyle}>
+          <div style={titleRowStyle}>
+            <strong style={pedidoSectionTitleStyle}>Notinha do pedido</strong>
+            <span style={metaTagStyle}>{itens.length} item(ns)</span>
+          </div>
+          {itens.length < 1 ? (
+            <span style={{ color: "#9cb0e8", fontSize: 13 }}>Sem itens detalhados neste pedido.</span>
+          ) : (
+            <div style={pedidoItensWrapStyle}>
+              <div style={pedidoItensHeaderStyle}>
+                <span>Qtd</span>
+                <span>Item</span>
+                <span style={{ textAlign: "right" }}>Preco</span>
+                <span style={{ textAlign: "right" }}>Total</span>
+              </div>
+              {itens.map((item, idx) => (
+                <div key={`det-item-${idx}`} style={pedidoItemRowStyle}>
+                  <span>{Number(item?.quantidade || 0)}x</span>
+                  <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+                    <span>{item?.nome || "-"}</span>
+                    {Array.isArray(item?.adicionais) && item.adicionais.length > 0 ? (
+                      <div style={pedidoItemAdicionaisWrapStyle}>
+                        {item.adicionais.map((adicional, adIdx) => (
+                          <span key={`det-item-${idx}-ad-${adIdx}`} style={pedidoItemAdicionalChipStyle}>
+                            {adicional}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {item?.observacao ? (
+                      <span style={pedidoItemObservacaoStyle}>{item.observacao}</span>
+                    ) : null}
+                  </div>
+                  <span style={{ textAlign: "right" }}>{moneyBr(item?.unit || 0)}</span>
+                  <strong style={{ textAlign: "right" }}>{moneyBr(item?.total || 0)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={pedidoSectionCardStyle}>
+          <div style={titleRowStyle}>
+            <strong style={pedidoSectionTitleStyle}>Totais</strong>
+            <span style={metaTagStyle}>Resumo financeiro</span>
+          </div>
+          <div style={pedidoTotaisGridStyle}>
+            <span>Subtotal</span>
+            <strong>{moneyBr(subtotal > 0 ? subtotal : totalItens)}</strong>
+            {taxaEntrega > 0 ? (
+              <>
+                <span>Taxa de entrega</span>
+                <strong>{moneyBr(taxaEntrega)}</strong>
+              </>
+            ) : null}
+            {taxaServico > 0 ? (
+              <>
+                <span>Taxa de servico</span>
+                <strong>{moneyBr(taxaServico)}</strong>
+              </>
+            ) : null}
+            {desconto > 0 ? (
+              <>
+                <span>Desconto</span>
+                <strong>- {moneyBr(desconto)}</strong>
+              </>
+            ) : null}
+            <span style={{ fontSize: 16, fontWeight: 800 }}>Total</span>
+            <strong style={{ fontSize: 16 }}>{moneyBr(totalPedido)}</strong>
+            {trocoAplicavel ? (
+              <>
+                <span>Troco para</span>
+                <strong>{resumo.trocoPara > 0 ? moneyBr(resumo.trocoPara) : "Nao informado"}</strong>
+              </>
+            ) : null}
+            {trocoAplicavel && resumo.trocoPara > 0 ? (
+              <>
+                <span>Troco necessario</span>
+                <strong>{moneyBr(trocoNecessario)}</strong>
+              </>
+            ) : null}
+          </div>
+          {pagamentos.length > 0 ? (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {pagamentos.map((pay, idx) => (
+                <span key={`pay-${idx}`} style={metaTagStyle}>
+                  {nomePagamentoEntrega(pay?.method)} {Number(pay?.amount || 0) > 0 ? `- ${moneyBr(pay.amount)}` : ""}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {(contato?.hasAny || contato?.telefone || contato?.email) ? (
+          <div style={pedidoSectionCardStyle}>
+            <strong style={pedidoSectionTitleStyle}>Contato do cliente</strong>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", color: "#dce6ff" }}>
+              {contato?.telefone ? <span>Telefone: {contato.telefone}</span> : null}
+              {contato?.email ? <span>E-mail: {contato.email}</span> : null}
+            </div>
+          </div>
+        ) : null}
+
         {notesText ? (
-          <div style={{ ...pedidoDetalhesFieldStyle, marginTop: 8 }}>
-            <span style={pedidoDetalhesLabelStyle}>Observacoes</span>
+          <div style={pedidoSectionCardStyle}>
+            <strong style={pedidoSectionTitleStyle}>Observacoes</strong>
             <strong style={{ whiteSpace: "pre-wrap" }}>{notesText}</strong>
           </div>
         ) : null}
 
-        <div style={{ ...pedidoDetalhesFieldStyle, marginTop: 10 }}>
-          <span style={pedidoDetalhesLabelStyle}>JSON tecnico (para homologacao)</span>
-          <textarea
-            readOnly
-            value={JSON.stringify(detalhes || {}, null, 2)}
-            style={pedidoDetalhesTextareaStyle}
-          />
+        <div style={pedidoSectionCardStyle}>
+          <div style={titleRowStyle}>
+            <strong style={pedidoSectionTitleStyle}>JSON tecnico</strong>
+            <button
+              type="button"
+              style={{ ...neutralMiniButtonStyle(false), minHeight: 32, fontSize: 12 }}
+              onClick={() => setMostrarJsonTecnico((value) => !value)}
+            >
+              {mostrarJsonTecnico ? "Ocultar" : "Mostrar"}
+            </button>
+          </div>
+          <span style={pedidoJsonHelperStyle}>
+            Visualizacao para homologacao e suporte. Nao interfere na operacao do pedido.
+          </span>
+          {mostrarJsonTecnico ? (
+            <pre style={pedidoJsonPreviewStyle}>{JSON.stringify(detalhes || {}, null, 2)}</pre>
+          ) : null}
         </div>
       </div>
     </div>
@@ -877,9 +1750,14 @@ function MotoboyCard({
                 <span style={{ fontSize: 12, color: "#9cb0e8" }}>{formatDateTimePtBr(pedido.dataISO)}</span>
                 <PedidoResumoBadges pedido={pedido} />
                 {pedido?.resumoVisual?.clienteNome ? (
-                  <span style={{ fontSize: 12, color: "#9cb0e8" }}>
-                    Cliente: {pedido.resumoVisual.clienteNome}
-                    {pedido?.resumoVisual?.clienteDocumento ? ` (${pedido.resumoVisual.clienteDocumento})` : ""}
+                  <span style={{ display: "grid", gap: 2, fontSize: 12, color: "#9cb0e8" }}>
+                    <span>Cliente: {pedido.resumoVisual.clienteNome}</span>
+                    {pedido?.resumoVisual?.clienteDocumento ? (
+                      <span style={{ color: "rgba(220, 230, 255, 0.78)" }}>
+                        {rotuloDocumentoCliente(pedido.resumoVisual.clienteDocumento)}:{" "}
+                        {formatarDocumentoCliente(pedido.resumoVisual.clienteDocumento)}
+                      </span>
+                    ) : null}
                   </span>
                 ) : null}
               </div>
@@ -965,8 +1843,8 @@ export default function Entregas() {
   const [pedidosPendentes, setPedidosPendentes] = useState([]);
   const [resumo, setResumo] = useState({ motoboys: 0, pedidos: 0, pendentes: 0 });
   const [q, setQ] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(agoraDataIso());
+  const [toDate, setToDate] = useState(agoraDataIso());
   const [fromTime, setFromTime] = useState("00:00");
   const [toTime, setToTime] = useState("23:59");
   const [novoNome, setNovoNome] = useState("");
@@ -981,6 +1859,16 @@ export default function Entregas() {
   const [addingGlobal, setAddingGlobal] = useState(false);
   const [pedidoPendenteEmAcao, setPedidoPendenteEmAcao] = useState("");
   const [pedidoPendenteDetalhes, setPedidoPendenteDetalhes] = useState(null);
+  const [pedidoParaCancelar, setPedidoParaCancelar] = useState(null);
+  const [cancelandoManual, setCancelandoManual] = useState(false);
+  const [cancelamentoOpcoes, setCancelamentoOpcoes] = useState([]);
+  const [cancelamentoOpcoesCarregando, setCancelamentoOpcoesCarregando] = useState(false);
+  const [cancelamentoOpcoesFonte, setCancelamentoOpcoesFonte] = useState("fallback");
+  const [cancelamentoOpcoesAviso, setCancelamentoOpcoesAviso] = useState("");
+  const [cancelamentoCodigosOficiais, setCancelamentoCodigosOficiais] = useState(false);
+  const [cancelamentoMotivo, setCancelamentoMotivo] = useState("");
+  const [cancelamentoSubmotivo, setCancelamentoSubmotivo] = useState("");
+  const [cancelamentoObservacao, setCancelamentoObservacao] = useState("");
   const [pendentesSelecionados, setPendentesSelecionados] = useState([]);
   const [processandoPendentesLote, setProcessandoPendentesLote] = useState(false);
   const [integracoes, setIntegracoes] = useState(() => normalizeIntegracoes([]));
@@ -1171,10 +2059,14 @@ export default function Entregas() {
     }
   }
 
-  async function carregarDados() {
+  async function carregarDados(options = {}) {
     if (!podeVerEntregas) return;
-    setLoading(true);
-    setErro("");
+    const silent = Boolean(options?.silent);
+    const includeIfoodDeep = Boolean(options?.includeIfoodDeep);
+    if (!silent) {
+      setLoading(true);
+      setErro("");
+    }
     try {
       const [motoboysData, pendentesData, resumoData, integracoesData] = await Promise.all([
         api.getEntregasMotoboys(role, ""),
@@ -1225,18 +2117,26 @@ export default function Entregas() {
         }));
 
         if (podeGerirEntregas) {
-          await Promise.all([carregarIfoodHomologacaoStatus(true), carregarIfoodEventos(40, true)]);
+          const shouldLoadIfoodDeep =
+            includeIfoodDeep || (mostrarPainelIntegracoes && Boolean(mostrarAvancadoIntegracao?.ifood));
+          if (shouldLoadIfoodDeep) {
+            void Promise.all([carregarIfoodHomologacaoStatus(true), carregarIfoodEventos(40, true)]);
+          }
         }
       }
     } catch (error) {
-      setErro(error?.message || "Falha ao carregar entregas.");
+      if (!silent) {
+        setErro(error?.message || "Falha ao carregar entregas.");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
-    carregarDados();
+    carregarDados({ includeIfoodDeep: false });
   }, [role, podeVerEntregas]);
 
   useEffect(() => {
@@ -1244,10 +2144,16 @@ export default function Entregas() {
     const timer = setInterval(() => {
       if (document.hidden) return;
       if (pausandoAutoRefreshIntegracao) return;
-      carregarDados();
+      carregarDados({ silent: true, includeIfoodDeep: false });
     }, 8000);
     return () => clearInterval(timer);
   }, [role, podeVerEntregas, pausandoAutoRefreshIntegracao]);
+
+  useEffect(() => {
+    if (!podeGerirEntregas) return;
+    if (!mostrarPainelIntegracoes || !Boolean(mostrarAvancadoIntegracao?.ifood)) return;
+    void Promise.all([carregarIfoodHomologacaoStatus(true), carregarIfoodEventos(40, true)]);
+  }, [role, podeGerirEntregas, mostrarPainelIntegracoes, mostrarAvancadoIntegracao?.ifood]);
 
   async function criarMotoboy() {
     if (!podeGerirEntregas || savingMotoboy) return;
@@ -1478,12 +2384,32 @@ export default function Entregas() {
     if (!podeGerirEntregas) return;
     setSincronizandoIntegracao((prev) => ({ ...prev, [provider]: true }));
     try {
-      const result = await api.sincronizarEntregasIntegracao(provider, { limit: 250 }, role);
-      onFeedback("success", result?.message || `${INTEGRACAO_LABEL[provider] || provider}: sincronizacao concluida.`);
-      if (provider === "ifood") {
-        await Promise.all([carregarIfoodHomologacaoStatus(true), carregarIfoodEventos(40, true)]);
+      const result = await api.sincronizarEntregasIntegracao(
+        provider,
+        {
+          limit: 250,
+          ...(provider === "ifood" ? { background: true } : {})
+        },
+        role
+      );
+      const syncEmSegundoPlano = Boolean(result?.started || result?.running);
+      onFeedback(
+        syncEmSegundoPlano && !result?.started ? "warning" : "success",
+        result?.message || `${INTEGRACAO_LABEL[provider] || provider}: sincronizacao concluida.`
+      );
+
+      const refreshTask = Promise.all([
+        carregarDados({ silent: true, includeIfoodDeep: false }),
+        provider === "ifood"
+          ? Promise.all([carregarIfoodHomologacaoStatus(true), carregarIfoodEventos(40, true)])
+          : Promise.resolve()
+      ]);
+
+      if (syncEmSegundoPlano) {
+        void refreshTask.catch(() => {});
+      } else {
+        await refreshTask;
       }
-      await carregarDados();
     } catch (error) {
       onFeedback("error", error?.message || "Falha ao sincronizar integracao.");
     } finally {
@@ -1581,20 +2507,58 @@ export default function Entregas() {
       onFeedback("warning", "Selecione um motoboy para enviar o pedido pendente.");
       return;
     }
+    const agendamento = getAgendamentoBloqueioPedido(pedido);
+    if (agendamento.blocked) {
+      onFeedback(
+        "warning",
+        `Pedido #${pedido?.numero || pedidoId} ainda agendado. Aguarde ate ${formatDateTimePtBr(agendamento.untilIso)} para despachar.`
+      );
+      return;
+    }
 
     setPedidoPendenteEmAcao(`atr:${pedidoId}`);
     try {
-      await api.atribuirEntregasPedido(
+      const result = await api.atribuirEntregasPedido(
         pedidoId,
         {
           motoboy_id: motoboyId
         },
         role
       );
-      onFeedback("success", `Pedido #${pedido?.numero || pedidoId} enviado para o motoboy.`);
+      const autoDispatch = result?.auto_dispatch || {};
+      if (autoDispatch?.reason === "scheduled_not_open" || autoDispatch?.external?.blocked_by_schedule) {
+        onFeedback(
+          "warning",
+          autoDispatch?.message ||
+            `Pedido #${pedido?.numero || pedidoId} ainda agendado. Despacho externo bloqueado ate a janela.`
+        );
+      } else {
+        onFeedback("success", `Pedido #${pedido?.numero || pedidoId} enviado para o motoboy.`);
+      }
       await carregarDados();
     } catch (error) {
       onFeedback("error", error?.message || "Falha ao enviar pedido para o motoboy.");
+    } finally {
+      setPedidoPendenteEmAcao("");
+    }
+  }
+
+  async function confirmarPedidoPendenteManual(pedido) {
+    if (!podeGerirEntregas) return;
+    const pedidoId = Number(pedido?.id || 0);
+    if (!Number.isFinite(pedidoId) || pedidoId < 1) return;
+    if (!podeConfirmarManualNoSistema(pedido)) {
+      onFeedback("warning", "Esse pedido nao esta apto para confirmacao manual no sistema.");
+      return;
+    }
+
+    setPedidoPendenteEmAcao(`cnf:${pedidoId}`);
+    try {
+      await api.confirmarEntregasPedido(pedidoId, {}, role);
+      onFeedback("success", `Pedido #${pedido?.numero || pedidoId} confirmado no sistema.`);
+      await carregarDados();
+    } catch (error) {
+      onFeedback("error", error?.message || "Falha ao confirmar pedido.");
     } finally {
       setPedidoPendenteEmAcao("");
     }
@@ -1613,6 +2577,111 @@ export default function Entregas() {
     } catch (error) {
       onFeedback("error", error?.message || "Falha ao remover pedido pendente.");
     } finally {
+      setPedidoPendenteEmAcao("");
+    }
+  }
+
+  async function abrirCancelamentoPedido(pedido) {
+    if (!podeGerirEntregas) return;
+    if (!podeCancelarManualNoSistema(pedido)) {
+      onFeedback("warning", "Esse pedido nao esta apto para cancelamento manual no sistema.");
+      return;
+    }
+
+    setPedidoParaCancelar(pedido);
+    setCancelamentoObservacao("");
+    setCancelamentoOpcoesFonte("fallback");
+    setCancelamentoOpcoesAviso("");
+    setCancelamentoOpcoesCarregando(true);
+    setCancelamentoSubmotivo("");
+    setCancelamentoCodigosOficiais(false);
+
+    try {
+      const response = await api.getEntregasPedidoCancelamentoOpcoes(Number(pedido?.id || 0), role);
+      const items = normalizeCancelOptionsList(response);
+      const first = items[0] || null;
+      const firstSub = first?.subreasons?.[0] || null;
+
+      setCancelamentoOpcoes(items);
+      setCancelamentoMotivo(first?.code || "");
+      setCancelamentoSubmotivo(firstSub?.code || "");
+      setCancelamentoOpcoesFonte(String(response?.source || "fallback").trim().toLowerCase() || "fallback");
+      setCancelamentoOpcoesAviso(String(response?.warning || "").trim());
+      setCancelamentoCodigosOficiais(Boolean(response?.codes_safe_for_ifood));
+    } catch (error) {
+      const fallback = normalizeCancelOptionsList({ items: CANCELAMENTO_FALLBACK_OPTIONS });
+      const first = fallback[0] || null;
+      const firstSub = first?.subreasons?.[0] || null;
+      setCancelamentoOpcoes(fallback);
+      setCancelamentoMotivo(first?.code || "");
+      setCancelamentoSubmotivo(firstSub?.code || "");
+      setCancelamentoOpcoesFonte("fallback");
+      setCancelamentoOpcoesAviso(String(error?.message || "Nao foi possivel carregar motivos da API iFood."));
+      setCancelamentoCodigosOficiais(false);
+    } finally {
+      setCancelamentoOpcoesCarregando(false);
+    }
+  }
+
+  async function cancelarPedidoPendenteManual(pedido, payload = {}) {
+    if (!podeGerirEntregas) return;
+    const pedidoId = Number(pedido?.id || 0);
+    if (!Number.isFinite(pedidoId) || pedidoId < 1) return;
+    if (!podeCancelarManualNoSistema(pedido)) {
+      onFeedback("warning", "Esse pedido nao esta apto para cancelamento manual no sistema.");
+      return;
+    }
+    if (!cancelamentoCodigosOficiais) {
+      onFeedback("warning", "Nao foi possivel validar os codigos oficiais de cancelamento no iFood.");
+      return;
+    }
+
+    const motivoCode = String(payload?.reason_code || cancelamentoMotivo || "").trim();
+    if (!motivoCode) {
+      onFeedback("warning", "Selecione um motivo de cancelamento.");
+      return;
+    }
+
+    const motivoObj = cancelamentoOpcoes.find((item) => String(item?.code || "") === motivoCode) || null;
+    const submotivoCode = String(payload?.subreason_code || cancelamentoSubmotivo || "").trim();
+    const submotivoObj =
+      motivoObj && Array.isArray(motivoObj.subreasons)
+        ? motivoObj.subreasons.find((item) => String(item?.code || "") === submotivoCode) || null
+        : null;
+    const observacao = String(payload?.observacao || cancelamentoObservacao || "").trim().slice(0, 240);
+
+    setCancelandoManual(true);
+    setPedidoPendenteEmAcao(`can:${pedidoId}`);
+    try {
+      await api.cancelarEntregasPedido(
+        pedidoId,
+        {
+          motivo: String(motivoObj?.label || motivoCode).trim(),
+          reason_code: motivoCode,
+          reason_label: String(motivoObj?.label || motivoCode).trim(),
+          subreason_code: String(submotivoObj?.code || submotivoCode || "").trim(),
+          subreason_label: String(submotivoObj?.label || submotivoCode || "").trim(),
+          observacao
+        },
+        role
+      );
+      onFeedback("success", `Pedido #${pedido?.numero || pedidoId} cancelado manualmente no sistema.`);
+      setPedidoParaCancelar(null);
+      setCancelamentoOpcoes([]);
+      setCancelamentoMotivo("");
+      setCancelamentoSubmotivo("");
+      setCancelamentoObservacao("");
+      setCancelamentoOpcoesAviso("");
+      setCancelamentoOpcoesFonte("fallback");
+      setCancelamentoCodigosOficiais(false);
+      if (pedidoPendenteDetalhes && Number(pedidoPendenteDetalhes?.id || 0) === pedidoId) {
+        setPedidoPendenteDetalhes(null);
+      }
+      await carregarDados();
+    } catch (error) {
+      onFeedback("error", error?.message || "Falha ao cancelar pedido.");
+    } finally {
+      setCancelandoManual(false);
       setPedidoPendenteEmAcao("");
     }
   }
@@ -1654,27 +2723,45 @@ export default function Entregas() {
     setProcessandoPendentesLote(true);
     let sucesso = 0;
     let falha = 0;
+    let bloqueadoAgendamento = 0;
 
     try {
       for (const pedidoId of listaIds) {
+        const pedidoAtual = (Array.isArray(pedidosPendentes) ? pedidosPendentes : []).find(
+          (item) => Number(item?.id || 0) === Number(pedidoId)
+        );
+        const agendamento = getAgendamentoBloqueioPedido(pedidoAtual || {});
+        if (agendamento.blocked) {
+          bloqueadoAgendamento += 1;
+          continue;
+        }
         try {
-          await api.atribuirEntregasPedido(
+          const result = await api.atribuirEntregasPedido(
             pedidoId,
             {
               motoboy_id: motoboyId
             },
             role
           );
-          sucesso += 1;
+          const autoDispatch = result?.auto_dispatch || {};
+          if (autoDispatch?.reason === "scheduled_not_open" || autoDispatch?.external?.blocked_by_schedule) {
+            bloqueadoAgendamento += 1;
+          } else {
+            sucesso += 1;
+          }
         } catch {
           falha += 1;
         }
       }
 
-      if (sucesso > 0 && falha < 1) {
+      if (sucesso > 0 && falha < 1 && bloqueadoAgendamento < 1) {
         onFeedback("success", `${sucesso} pedido(s) enviado(s) para o motoboy.`);
-      } else if (sucesso > 0 && falha > 0) {
-        onFeedback("warning", `${sucesso} pedido(s) enviado(s) e ${falha} com falha.`);
+      } else if (sucesso > 0 || bloqueadoAgendamento > 0) {
+        const partes = [];
+        if (sucesso > 0) partes.push(`${sucesso} enviado(s)`);
+        if (bloqueadoAgendamento > 0) partes.push(`${bloqueadoAgendamento} agendado(s) aguardando janela`);
+        if (falha > 0) partes.push(`${falha} com falha`);
+        onFeedback("warning", partes.join(" | "));
       } else {
         onFeedback("error", "Falha ao enviar pedidos em lote.");
       }
@@ -1742,6 +2829,30 @@ export default function Entregas() {
       label: motoboy.nome
     }));
   }, [motoboys]);
+
+  const cancelamentoMotivoOptions = useMemo(() => {
+    return (Array.isArray(cancelamentoOpcoes) ? cancelamentoOpcoes : []).map((item) => ({
+      value: String(item?.code || ""),
+      label: String(item?.label || item?.code || "").trim()
+    }));
+  }, [cancelamentoOpcoes]);
+
+  const cancelamentoMotivoSelecionado = useMemo(() => {
+    return (
+      (Array.isArray(cancelamentoOpcoes) ? cancelamentoOpcoes : []).find(
+        (item) => String(item?.code || "") === String(cancelamentoMotivo || "")
+      ) || null
+    );
+  }, [cancelamentoOpcoes, cancelamentoMotivo]);
+
+  const cancelamentoSubmotivoOptions = useMemo(() => {
+    return (Array.isArray(cancelamentoMotivoSelecionado?.subreasons) ? cancelamentoMotivoSelecionado.subreasons : []).map(
+      (item) => ({
+        value: String(item?.code || ""),
+        label: String(item?.label || item?.code || "").trim()
+      })
+    );
+  }, [cancelamentoMotivoSelecionado]);
 
   if (!podeVerEntregas) {
     return <p>Sem permissao para acessar entregas.</p>;
@@ -1845,8 +2956,9 @@ export default function Entregas() {
                 type="button"
                 style={neutralMiniButtonStyle(false)}
                 onClick={() => {
-                  setFromDate("");
-                  setToDate("");
+                  const hoje = agoraDataIso();
+                  setFromDate(hoje);
+                  setToDate(hoje);
                   setFromTime("00:00");
                   setToTime("23:59");
                 }}
@@ -2667,10 +3779,15 @@ export default function Entregas() {
             ) : (
               <div style={listStyle}>
                 {pendentesAtivosFiltrados.map((pedido) => {
+                  const actionKeyConfirmar = `cnf:${pedido.id}`;
                   const actionKeyAtribuir = `atr:${pedido.id}`;
+                  const actionKeyCancelar = `can:${pedido.id}`;
                   const actionKeyRemover = `del:${pedido.id}`;
                   const pedidoId = Number(pedido?.id || 0);
                   const selecionado = pendentesSelecionados.includes(pedidoId);
+                  const podeConfirmarManual = podeConfirmarManualNoSistema(pedido);
+                  const podeCancelarManual = podeCancelarManualNoSistema(pedido);
+                  const agendamentoBloqueio = getAgendamentoBloqueioPedido(pedido);
                   return (
                     <article key={`pendente-${pedido.id}`} style={pedidoItemStyle}>
                       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -2686,10 +3803,20 @@ export default function Entregas() {
                         <strong style={{ fontSize: 18, color: "#ffd27b" }}>#{pedido.numero}</strong>
                         <span style={{ fontSize: 12, color: "#9cb0e8" }}>{formatDateTimePtBr(pedido.dataISO)}</span>
                         <PedidoResumoBadges pedido={pedido} />
+                        {agendamentoBloqueio.blocked ? (
+                          <span style={{ fontSize: 12, color: "#ffcf9d" }}>
+                            Agendado: despacho liberado em {formatDateTimePtBr(agendamentoBloqueio.untilIso)}
+                          </span>
+                        ) : null}
                         {pedido?.resumoVisual?.clienteNome ? (
-                          <span style={{ fontSize: 12, color: "#9cb0e8" }}>
-                            Cliente: {pedido.resumoVisual.clienteNome}
-                            {pedido?.resumoVisual?.clienteDocumento ? ` (${pedido.resumoVisual.clienteDocumento})` : ""}
+                          <span style={{ display: "grid", gap: 2, fontSize: 12, color: "#9cb0e8" }}>
+                            <span>Cliente: {pedido.resumoVisual.clienteNome}</span>
+                            {pedido?.resumoVisual?.clienteDocumento ? (
+                              <span style={{ color: "rgba(220, 230, 255, 0.78)" }}>
+                                {rotuloDocumentoCliente(pedido.resumoVisual.clienteDocumento)}:{" "}
+                                {formatarDocumentoCliente(pedido.resumoVisual.clienteDocumento)}
+                              </span>
+                            ) : null}
                           </span>
                         ) : null}
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2699,24 +3826,42 @@ export default function Entregas() {
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        {podeConfirmarManual ? (
+                          <button
+                            type="button"
+                            style={primaryMiniButtonStyle(
+                              pedidoPendenteEmAcao === actionKeyConfirmar || processandoPendentesLote || !podeGerirEntregas
+                            )}
+                            onClick={() => confirmarPedidoPendenteManual(pedido)}
+                            disabled={pedidoPendenteEmAcao === actionKeyConfirmar || processandoPendentesLote || !podeGerirEntregas}
+                          >
+                            {pedidoPendenteEmAcao === actionKeyConfirmar ? "Confirmando..." : "Confirmar pedido"}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
-                          style={primaryMiniButtonStyle(
-                            pedidoPendenteEmAcao === actionKeyAtribuir ||
+                            style={primaryMiniButtonStyle(
+                              pedidoPendenteEmAcao === actionKeyAtribuir ||
+                                processandoPendentesLote ||
+                                !selectedMotoboyId ||
+                                agendamentoBloqueio.blocked ||
+                                !podeGerirEntregas
+                            )}
+                            onClick={() => enviarPendenteParaMotoboy(pedido)}
+                            disabled={
+                              pedidoPendenteEmAcao === actionKeyAtribuir ||
                               processandoPendentesLote ||
                               !selectedMotoboyId ||
+                              agendamentoBloqueio.blocked ||
                               !podeGerirEntregas
-                          )}
-                          onClick={() => enviarPendenteParaMotoboy(pedido)}
-                          disabled={
-                            pedidoPendenteEmAcao === actionKeyAtribuir ||
-                            processandoPendentesLote ||
-                            !selectedMotoboyId ||
-                            !podeGerirEntregas
-                          }
-                        >
-                          {pedidoPendenteEmAcao === actionKeyAtribuir ? "Enviando..." : "Enviar para motoboy"}
-                        </button>
+                            }
+                          >
+                            {pedidoPendenteEmAcao === actionKeyAtribuir
+                              ? "Enviando..."
+                              : agendamentoBloqueio.blocked
+                                ? "Aguardando horario"
+                                : "Enviar para motoboy"}
+                          </button>
                         <button
                           type="button"
                           style={neutralMiniButtonStyle(processandoPendentesLote)}
@@ -2725,6 +3870,18 @@ export default function Entregas() {
                         >
                           Detalhes
                         </button>
+                        {podeCancelarManual ? (
+                          <button
+                            type="button"
+                            style={dangerMiniButtonStyle(
+                              pedidoPendenteEmAcao === actionKeyCancelar || processandoPendentesLote || !podeGerirEntregas
+                            )}
+                            onClick={() => void abrirCancelamentoPedido(pedido)}
+                            disabled={pedidoPendenteEmAcao === actionKeyCancelar || processandoPendentesLote || !podeGerirEntregas}
+                          >
+                            {pedidoPendenteEmAcao === actionKeyCancelar ? "Cancelando..." : "Cancelar pedido"}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           style={dangerMiniButtonStyle(
@@ -2765,9 +3922,14 @@ export default function Entregas() {
                         <span style={{ fontSize: 12, color: "#9cb0e8" }}>{formatDateTimePtBr(pedido.dataISO)}</span>
                         <PedidoResumoBadges pedido={pedido} />
                         {pedido?.resumoVisual?.clienteNome ? (
-                          <span style={{ fontSize: 12, color: "#9cb0e8" }}>
-                            Cliente: {pedido.resumoVisual.clienteNome}
-                            {pedido?.resumoVisual?.clienteDocumento ? ` (${pedido.resumoVisual.clienteDocumento})` : ""}
+                          <span style={{ display: "grid", gap: 2, fontSize: 12, color: "#9cb0e8" }}>
+                            <span>Cliente: {pedido.resumoVisual.clienteNome}</span>
+                            {pedido?.resumoVisual?.clienteDocumento ? (
+                              <span style={{ color: "rgba(220, 230, 255, 0.78)" }}>
+                                {rotuloDocumentoCliente(pedido.resumoVisual.clienteDocumento)}:{" "}
+                                {formatarDocumentoCliente(pedido.resumoVisual.clienteDocumento)}
+                              </span>
+                            ) : null}
                           </span>
                         ) : null}
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2841,6 +4003,98 @@ export default function Entregas() {
         open={Boolean(pedidoPendenteDetalhes)}
         onClose={() => setPedidoPendenteDetalhes(null)}
       />
+
+      <ConfirmDialog
+        open={Boolean(pedidoParaCancelar)}
+        title="Cancelar pedido no sistema"
+        message={
+          pedidoParaCancelar
+            ? `Confirma o cancelamento manual do pedido #${pedidoParaCancelar.numero}?`
+            : ""
+        }
+        details={
+          cancelamentoCodigosOficiais
+            ? "O cancelamento sera enviado ao iFood com motivo e submotivo."
+            : "Nao foi possivel validar motivos oficiais na API iFood. Recarregue antes de cancelar."
+        }
+        confirmLabel="Cancelar pedido"
+        cancelLabel="Voltar"
+        variant="danger"
+        processing={cancelandoManual}
+        confirmDisabled={cancelamentoOpcoesCarregando || !cancelamentoMotivo || !cancelamentoCodigosOficiais}
+        onCancel={() => {
+          if (cancelandoManual) return;
+          setPedidoParaCancelar(null);
+          setCancelamentoOpcoes([]);
+          setCancelamentoMotivo("");
+          setCancelamentoSubmotivo("");
+          setCancelamentoObservacao("");
+          setCancelamentoOpcoesAviso("");
+          setCancelamentoOpcoesFonte("fallback");
+          setCancelamentoCodigosOficiais(false);
+        }}
+        onConfirm={() => {
+          if (!pedidoParaCancelar) return;
+          void cancelarPedidoPendenteManual(pedidoParaCancelar, {
+            reason_code: cancelamentoMotivo,
+            subreason_code: cancelamentoSubmotivo,
+            observacao: cancelamentoObservacao
+          });
+        }}
+      >
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 4 }}>
+            <span style={miniFieldLabelStyle}>Motivo de cancelamento</span>
+            <SelectField
+              value={cancelamentoMotivo}
+              onChange={(value) => {
+                setCancelamentoMotivo(value);
+                const selected = cancelamentoOpcoes.find((item) => String(item?.code || "") === String(value)) || null;
+                const firstSub = selected?.subreasons?.[0] || null;
+                setCancelamentoSubmotivo(firstSub?.code || "");
+              }}
+              options={cancelamentoMotivoOptions}
+              placeholder={cancelamentoOpcoesCarregando ? "Carregando motivos..." : "Selecione o motivo"}
+              buttonStyle={inputDateStyle}
+              disabled={cancelamentoOpcoesCarregando || cancelandoManual}
+            />
+          </div>
+
+          {cancelamentoSubmotivoOptions.length > 0 ? (
+            <div style={{ display: "grid", gap: 4 }}>
+              <span style={miniFieldLabelStyle}>Submotivo</span>
+              <SelectField
+                value={cancelamentoSubmotivo}
+                onChange={setCancelamentoSubmotivo}
+                options={cancelamentoSubmotivoOptions}
+                placeholder="Selecione o submotivo"
+                buttonStyle={inputDateStyle}
+                disabled={cancelamentoOpcoesCarregando || cancelandoManual}
+              />
+            </div>
+          ) : null}
+
+          <div style={{ display: "grid", gap: 4 }}>
+            <span style={miniFieldLabelStyle}>Observacao (opcional)</span>
+            <textarea
+              value={cancelamentoObservacao}
+              onChange={(event) => setCancelamentoObservacao(String(event.target.value || "").slice(0, 240))}
+              style={{ ...textAreaStyle, minHeight: 80, marginBottom: 0 }}
+              placeholder="Ex.: item principal sem estoque agora"
+              disabled={cancelandoManual}
+            />
+          </div>
+
+          {cancelamentoOpcoesAviso ? (
+            <span style={{ color: "#ffcf9d", fontSize: 12 }}>{cancelamentoOpcoesAviso}</span>
+          ) : null}
+          {!cancelamentoCodigosOficiais ? (
+            <span style={{ color: "#ff9ca8", fontSize: 12 }}>
+              Cancelamento bloqueado ate carregar codigos oficiais do iFood.
+            </span>
+          ) : null}
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -3362,6 +4616,108 @@ const pedidoDetalhesTextareaStyle = {
   fontFamily: "Consolas, 'Courier New', monospace",
   fontSize: 12,
   resize: "vertical"
+};
+
+const pedidoJsonHelperStyle = {
+  color: "#9eb0e8",
+  fontSize: 12,
+  lineHeight: 1.4
+};
+
+const pedidoJsonPreviewStyle = {
+  margin: 0,
+  maxHeight: 240,
+  overflow: "auto",
+  border: "1px solid #31416f",
+  borderRadius: 10,
+  background: "#0f1731",
+  color: "#e6edff",
+  padding: 12,
+  fontFamily: "Consolas, 'Courier New', monospace",
+  fontSize: 12,
+  lineHeight: 1.45,
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word"
+};
+
+const pedidoSectionCardStyle = {
+  border: "1px solid #2f3d6b",
+  borderRadius: 10,
+  background: "#162247",
+  padding: "10px 12px",
+  display: "grid",
+  gap: 8
+};
+
+const pedidoSectionTitleStyle = {
+  fontSize: 16,
+  fontFamily: "var(--font-heading)"
+};
+
+const pedidoItensWrapStyle = {
+  border: "1px solid #2d3963",
+  borderRadius: 10,
+  background: "#101936",
+  overflow: "auto",
+  maxHeight: 300
+};
+
+const pedidoItensHeaderStyle = {
+  display: "grid",
+  gridTemplateColumns: "64px minmax(220px, 1fr) 120px 120px",
+  gap: 8,
+  padding: "8px 10px",
+  borderBottom: "1px solid #2f3a64",
+  color: "#a9bbea",
+  fontSize: 12,
+  fontWeight: 700,
+  position: "sticky",
+  top: 0,
+  background: "#162247",
+  zIndex: 1
+};
+
+const pedidoItemRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "64px minmax(220px, 1fr) 120px 120px",
+  gap: 8,
+  alignItems: "start",
+  padding: "8px 10px",
+  borderBottom: "1px solid #2a365d",
+  color: "#eef3ff"
+};
+
+const pedidoItemAdicionaisWrapStyle = {
+  display: "flex",
+  gap: 6,
+  flexWrap: "wrap"
+};
+
+const pedidoItemAdicionalChipStyle = {
+  border: "1px solid #4a68ac",
+  borderRadius: 999,
+  background: "rgba(65, 99, 180, 0.16)",
+  color: "#d9e5ff",
+  fontSize: 11,
+  fontWeight: 700,
+  padding: "3px 8px",
+  whiteSpace: "normal"
+};
+
+const pedidoItemObservacaoStyle = {
+  color: "#9cb0e8",
+  fontSize: 12,
+  whiteSpace: "pre-wrap",
+  lineHeight: 1.45,
+  marginTop: 1
+};
+
+const pedidoTotaisGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "minmax(140px, 1fr) auto",
+  gap: 6,
+  alignItems: "center",
+  color: "#dce6ff"
 };
 
 function feedbackStyle(type = "info") {

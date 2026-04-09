@@ -1,6 +1,6 @@
 {
   "name": "gastrocode-brasil-pdv",
-  "version": "1.0.18",
+  "version": "1.0.20",
   "main": "electron/main.js",
   "type": "commonjs",
   "engines": {

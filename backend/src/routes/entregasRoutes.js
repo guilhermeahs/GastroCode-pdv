@@ -88,6 +88,21 @@ router.delete(
   allowRoles(["GARCOM", "GERENTE"], { permission: "APP_ENTREGAS_GERIR" }),
   EntregasController.removerPedido
 );
+router.get(
+  "/entregas/pedidos/:pedidoId/cancelamento-opcoes",
+  allowRoles(["GARCOM", "GERENTE"], { permission: "APP_ENTREGAS_GERIR" }),
+  EntregasController.opcoesCancelamentoPedido
+);
+router.post(
+  "/entregas/pedidos/:pedidoId/confirmar",
+  allowRoles(["GARCOM", "GERENTE"], { permission: "APP_ENTREGAS_GERIR" }),
+  EntregasController.confirmarPedido
+);
+router.post(
+  "/entregas/pedidos/:pedidoId/cancelar",
+  allowRoles(["GARCOM", "GERENTE"], { permission: "APP_ENTREGAS_GERIR" }),
+  EntregasController.cancelarPedido
+);
 router.post(
   "/entregas/pedidos/:pedidoId/atribuir",
   allowRoles(["GARCOM", "GERENTE"], { permission: "APP_ENTREGAS_GERIR" }),

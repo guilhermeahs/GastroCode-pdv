@@ -4,7 +4,28 @@ import { sha256 } from "js-sha256";
 
 const PKCS8_ED25519_MARKER = Uint8Array.from([0x04, 0x20]);
 const SPKI_ED25519_PREFIX_HEX = "302a300506032b6570032100";
-const textEncoder = new TextEncoder();
+const textEncoder =
+  typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+
+function utf8ToBytes(value) {
+  const text = String(value || "");
+  if (textEncoder) {
+    return textEncoder.encode(text);
+  }
+  // Fallback para runtimes sem TextEncoder (alguns Android/Hermes em release).
+  const encoded = encodeURIComponent(text);
+  const out = [];
+  for (let i = 0; i < encoded.length; i += 1) {
+    const ch = encoded[i];
+    if (ch === "%") {
+      out.push(Number.parseInt(encoded.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      out.push(ch.charCodeAt(0));
+    }
+  }
+  return Uint8Array.from(out);
+}
 
 function hexToBytes(hex) {
   const clean = String(hex || "").trim().toLowerCase();
@@ -34,7 +55,7 @@ function bytesToBase64Url(bytes) {
 }
 
 function utf8ToBase64Url(text) {
-  return bytesToBase64Url(textEncoder.encode(String(text || "")));
+  return bytesToBase64Url(utf8ToBytes(text));
 }
 
 function buildPemBlock(header, bytes) {
@@ -130,7 +151,7 @@ export function signTokenWithPrivatePem(privatePem, payload) {
   const seed = parsePkcs8Ed25519Seed(privatePem);
   const keyPair = nacl.sign.keyPair.fromSeed(seed);
   const payloadEncoded = utf8ToBase64Url(JSON.stringify(payload));
-  const signedContent = textEncoder.encode(`HB1.${payloadEncoded}`);
+  const signedContent = utf8ToBytes(`HB1.${payloadEncoded}`);
   const signature = nacl.sign.detached(signedContent, keyPair.secretKey);
   const signatureEncoded = bytesToBase64Url(signature);
   return `HB1.${payloadEncoded}.${signatureEncoded}`;

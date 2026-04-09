@@ -292,6 +292,26 @@ export const api = {
       },
       role
     ),
+  confirmarEntregasPedido: (pedidoId, body, role) =>
+    request(
+      `/api/entregas/pedidos/${pedidoId}/confirmar`,
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
+  getEntregasPedidoCancelamentoOpcoes: (pedidoId, role) =>
+    request(`/api/entregas/pedidos/${pedidoId}/cancelamento-opcoes`, {}, role),
+  cancelarEntregasPedido: (pedidoId, body, role) =>
+    request(
+      `/api/entregas/pedidos/${pedidoId}/cancelar`,
+      {
+        method: "POST",
+        body: JSON.stringify(body || {})
+      },
+      role
+    ),
   atribuirEntregasPedido: (pedidoId, body, role) =>
     request(
       `/api/entregas/pedidos/${pedidoId}/atribuir`,

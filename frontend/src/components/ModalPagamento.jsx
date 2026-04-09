@@ -79,7 +79,9 @@ export default function ModalPagamento({
   const [confirmarImpressaoOpen, setConfirmarImpressaoOpen] = useState(false);
   const [payloadPendente, setPayloadPendente] = useState(null);
   const [previewImpressao, setPreviewImpressao] = useState("");
-  const [nomeGarcomFechamento, setNomeGarcomFechamento] = useState("");
+  const [garcomCodigoFechamento, setGarcomCodigoFechamento] = useState("");
+  const [garcomPinFechamento, setGarcomPinFechamento] = useState("");
+  const [garcomNomeFechamento, setGarcomNomeFechamento] = useState("");
   const chaveInicializacaoRef = useRef("");
   const formasPagamentoOptions = useMemo(
     () => [
@@ -141,11 +143,14 @@ export default function ModalPagamento({
     setValorRecebidoDinheiro(formatarValorEntrada(pedido.total));
     setPessoas(Number(pedido.pessoas || pessoasPadrao));
     setDividirPorPessoa(Number(pedido.dividir_por_pessoa || 0) === 1);
-    setNomeGarcomFechamento(
-      String(
-        pedido.garcom_nome_fechamento ||
-          (role === "GARCOM" ? authUser?.nome || "" : "")
-      )
+    setGarcomCodigoFechamento(
+      String(role === "GARCOM" ? authUser?.apelido || "" : "")
+        .trim()
+        .slice(0, 60)
+    );
+    setGarcomPinFechamento("");
+    setGarcomNomeFechamento(
+      String(authUser?.nome || authUser?.apelido || "")
         .trim()
         .slice(0, 60)
     );
@@ -153,7 +158,7 @@ export default function ModalPagamento({
     setConfirmarImpressaoOpen(false);
     setPayloadPendente(null);
     setPreviewImpressao("");
-  }, [open, pedido, mesa, mode, configuracoes, role, authUser?.nome]);
+  }, [open, pedido, mesa, mode, configuracoes, role, authUser?.apelido, authUser?.nome]);
 
   useEffect(() => {
     if (!open) {
@@ -210,10 +215,8 @@ export default function ModalPagamento({
   if (!open || !pedido || !mesa) return null;
 
   const emPagamento = mode === "pagar";
-  const precisaNomeGarcom =
-    !emPagamento &&
-    role === "GARCOM" &&
-    Boolean(configuracoes?.solicitar_nome_garcom_fechamento);
+  const exigePinGarcomFechamento = !emPagamento && configuracoes.exigir_pin_fechamento_conta !== false;
+  const solicitarNomeGarcom = !emPagamento && configuracoes.solicitar_nome_garcom_fechamento === true;
   const titulo = emPagamento
     ? `Pagamento da Mesa ${mesa.numero}`
     : `Enviar Mesa ${mesa.numero} para Fechamento`;
@@ -251,7 +254,9 @@ export default function ModalPagamento({
 
     const pessoasNumero = Math.max(1, Math.floor(Number(pessoas || 1)));
     const taxaNumero = Number(taxaServicoPercent || 0);
-    const nomeGarcomNormalizado = String(nomeGarcomFechamento || "").trim().slice(0, 60);
+    const codigoGarcomNormalizado = String(garcomCodigoFechamento || "").trim().slice(0, 60);
+    const pinGarcomNormalizado = String(garcomPinFechamento || "").trim();
+    const nomeGarcomNormalizado = String(garcomNomeFechamento || "").trim().slice(0, 60);
 
     if (cobrarTaxa && (!Number.isFinite(taxaNumero) || taxaNumero < 0 || taxaNumero > TAXA_SERVICO_MAX)) {
       setErro(`A taxa de servico deve ficar entre 0 e ${TAXA_SERVICO_MAX}%.`);
@@ -276,12 +281,23 @@ export default function ModalPagamento({
     };
 
     if (!emPagamento) {
-      if (precisaNomeGarcom && !nomeGarcomNormalizado) {
-        setErro("Informe o nome do garcom para enviar a mesa ao fechamento.");
-        return;
-      }
-      if (precisaNomeGarcom || nomeGarcomNormalizado) {
-        payload.garcom_nome_fechamento = nomeGarcomNormalizado;
+      if (exigePinGarcomFechamento) {
+        if (!codigoGarcomNormalizado) {
+          setErro("Informe o codigo do garcom para enviar a mesa ao fechamento.");
+          return;
+        }
+        if (!/^\d{4,8}$/.test(pinGarcomNormalizado)) {
+          setErro("Informe o PIN do garcom com 4 a 8 numeros.");
+          return;
+        }
+        payload.garcom_codigo_fechamento = codigoGarcomNormalizado;
+        payload.garcom_pin_fechamento = pinGarcomNormalizado;
+      } else {
+        if (solicitarNomeGarcom && !nomeGarcomNormalizado) {
+          setErro("Informe o nome do garcom para enviar a mesa ao fechamento.");
+          return;
+        }
+        payload.garcom_nome_fechamento = nomeGarcomNormalizado || authUser?.nome || authUser?.apelido || "Nao informado";
       }
     }
 
@@ -431,16 +447,49 @@ export default function ModalPagamento({
             : "A mesa vai para FECHANDO. Voce pode mostrar a pre-conta ao cliente e finalizar depois."}
         </p>
 
-        {precisaNomeGarcom && (
+        {exigePinGarcomFechamento && (
+          <div style={{ ...fieldStyle, gap: 10 }}>
+            <div style={fieldStyle}>
+              <label style={fieldLabelStyle}>Codigo do garcom</label>
+              <input
+                type="text"
+                value={garcomCodigoFechamento}
+                onChange={(e) => setGarcomCodigoFechamento(e.target.value)}
+                style={inputStyle}
+                placeholder="Ex.: garcom1"
+                maxLength={60}
+                autoComplete="off"
+                disabled={processing}
+              />
+            </div>
+            <div style={fieldStyle}>
+              <label style={fieldLabelStyle}>PIN do garcom</label>
+              <input
+                type="password"
+                value={garcomPinFechamento}
+                onChange={(e) => setGarcomPinFechamento(e.target.value)}
+                style={inputStyle}
+                placeholder="4 a 8 numeros"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={8}
+                disabled={processing}
+              />
+            </div>
+          </div>
+        )}
+
+        {!exigePinGarcomFechamento && solicitarNomeGarcom && (
           <div style={fieldStyle}>
-            <label style={fieldLabelStyle}>Nome do garcom no fechamento</label>
+            <label style={fieldLabelStyle}>Nome do garcom</label>
             <input
               type="text"
-              value={nomeGarcomFechamento}
-              onChange={(e) => setNomeGarcomFechamento(e.target.value)}
+              value={garcomNomeFechamento}
+              onChange={(e) => setGarcomNomeFechamento(e.target.value)}
               style={inputStyle}
-              placeholder="Ex.: Guilherme"
+              placeholder="Nome para identificar o fechamento"
               maxLength={60}
+              autoComplete="off"
               disabled={processing}
             />
           </div>

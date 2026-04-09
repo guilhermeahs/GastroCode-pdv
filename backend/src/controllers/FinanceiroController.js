@@ -109,6 +109,145 @@ function normalizarPeriodoDias(value, fallback = 30) {
   return Math.max(1, Math.min(365, Math.round(dias)));
 }
 
+function parseNumberFlex(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return null;
+    const cleaned = raw.replace(/[^\d,.-]/g, "");
+    if (!cleaned) return null;
+    const hasComma = cleaned.includes(",");
+    const hasDot = cleaned.includes(".");
+    let normalized = cleaned;
+    if (hasComma && hasDot) {
+      normalized = cleaned.replace(/\./g, "").replace(",", ".");
+    } else if (hasComma) {
+      normalized = cleaned.replace(",", ".");
+    }
+    const num = Number(normalized);
+    return Number.isFinite(num) ? num : null;
+  }
+  return null;
+}
+
+function jsonSafeParse(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return null;
+  }
+}
+
+function getPath(obj, path = []) {
+  let current = obj;
+  for (const part of path) {
+    if (!current || typeof current !== "object") return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function normalizeOnlineSource(raw) {
+  const source = String(raw || "")
+    .trim()
+    .toUpperCase();
+  if (!source) return "";
+  if (source === "IFOOD") return "IFOOD";
+  if (source === "99" || source === "NINENINE" || source === "NINE_NINE" || source === "99FOOD") {
+    return "NINENINE";
+  }
+  return source;
+}
+
+function extractOnlineOrderTotal(row = {}) {
+  const detalhes = jsonSafeParse(row.detalhes_json);
+  const candidates = [];
+  const pushCandidate = (value) => {
+    const parsed = parseNumberFlex(value);
+    if (parsed !== null && parsed >= 0) {
+      candidates.push(parsed);
+    }
+  };
+
+  pushCandidate(row?.valor_total);
+  pushCandidate(row?.total);
+
+  const paths = [
+    ["total"],
+    ["amount"],
+    ["valor"],
+    ["totalAmount"],
+    ["total_amount"],
+    ["orderAmount"],
+    ["order_amount"],
+    ["order", "total"],
+    ["order", "amount"],
+    ["order", "valor"],
+    ["order", "totalAmount"],
+    ["order", "total_amount"],
+    ["order", "orderAmount"],
+    ["order", "order_amount"],
+    ["pedido", "total"],
+    ["pedido", "amount"],
+    ["pedido", "valor"],
+    ["pedido", "totalAmount"],
+    ["pedido", "total_amount"],
+    ["total", "amount"],
+    ["total", "value"],
+    ["total", "orderAmount"],
+    ["total", "order_amount"],
+    ["totals", "total"],
+    ["totals", "amount"],
+    ["totals", "value"],
+    ["totals", "orderAmount"],
+    ["totals", "order_amount"],
+    ["pricing", "total"],
+    ["pricing", "amount"],
+    ["pricing", "value"],
+    ["pricing", "finalAmount"],
+    ["pricing", "final_amount"],
+    ["payment", "amount"],
+    ["payment", "value"],
+    ["payment", "total"]
+  ];
+
+  for (const path of paths) {
+    pushCandidate(getPath(detalhes, path));
+  }
+
+  const paymentLists = [
+    getPath(detalhes, ["payments"]),
+    getPath(detalhes, ["payment_methods"]),
+    getPath(detalhes, ["paymentMethods"]),
+    getPath(detalhes, ["pagamentos"]),
+    getPath(detalhes, ["order", "payments"]),
+    getPath(detalhes, ["order", "payment_methods"]),
+    getPath(detalhes, ["order", "paymentMethods"])
+  ].filter((list) => Array.isArray(list));
+
+  for (const list of paymentLists) {
+    let sum = 0;
+    for (const item of list) {
+      const amount =
+        parseNumberFlex(item?.amount) ??
+        parseNumberFlex(item?.valor) ??
+        parseNumberFlex(item?.value) ??
+        parseNumberFlex(item?.total);
+      if (amount !== null && amount >= 0) {
+        sum += amount;
+      }
+    }
+    if (sum > 0) {
+      candidates.push(sum);
+    }
+  }
+
+  const picked = candidates.find((value) => Number.isFinite(value) && value > 0) ?? 0;
+  return Number(picked.toFixed(2));
+}
+
 function filtroDataSql(intervalo = {}, coluna = "p.closed_at") {
   if (intervalo?.inicio && intervalo?.fim) {
     return {
@@ -896,6 +1035,286 @@ function obterRelatoriosGerenciaisPeriodo(periodo = {}) {
       };
     });
 
+  const entregaStatusCanceladoClause = `
+    upper(COALESCE(mp.status, '')) IN (
+      'CANCELADO',
+      'CANCELADA',
+      'CANCELED',
+      'CANCELLED'
+    )
+  `;
+  const entregaStatusEntregueClause = `
+    upper(COALESCE(mp.status, '')) IN (
+      'ENTREGUE',
+      'CONCLUIDO',
+      'CONCLUIDA',
+      'DELIVERED',
+      'FINISHED'
+    )
+  `;
+
+  const entregasPorDia = db
+    .prepare(`
+      SELECT
+        DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime') AS data,
+        COUNT(*) AS total,
+        ROUND(COALESCE(SUM(CASE WHEN mp.motoboy_id IS NULL THEN 1 ELSE 0 END), 0), 0) AS pendentes,
+        ROUND(COALESCE(SUM(CASE WHEN mp.motoboy_id IS NOT NULL THEN 1 ELSE 0 END), 0), 0) AS atribuidos,
+        ROUND(COALESCE(SUM(CASE WHEN ${entregaStatusEntregueClause} THEN 1 ELSE 0 END), 0), 0) AS entregues,
+        ROUND(COALESCE(SUM(CASE WHEN ${entregaStatusCanceladoClause} THEN 1 ELSE 0 END), 0), 0) AS cancelados
+      FROM motoboy_pedidos mp
+      WHERE DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime') BETWEEN DATE(?) AND DATE(?)
+      GROUP BY DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime')
+      ORDER BY DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime') ASC
+    `)
+    .all(dataInicialAtual, dataFinalAtual)
+    .map((item) => ({
+      data: item.data,
+      total: Number(item.total || 0),
+      pendentes: Number(item.pendentes || 0),
+      atribuidos: Number(item.atribuidos || 0),
+      entregues: Number(item.entregues || 0),
+      cancelados: Number(item.cancelados || 0)
+    }));
+
+  const desempenhoMotoboy = db
+    .prepare(`
+      SELECT
+        COALESCE(NULLIF(TRIM(m.nome), ''), 'Sem motoboy') AS motoboy,
+        COUNT(*) AS total,
+        ROUND(COALESCE(SUM(CASE WHEN mp.motoboy_id IS NULL THEN 1 ELSE 0 END), 0), 0) AS pendentes,
+        ROUND(COALESCE(SUM(CASE WHEN mp.motoboy_id IS NOT NULL THEN 1 ELSE 0 END), 0), 0) AS atribuidos,
+        ROUND(COALESCE(SUM(CASE WHEN ${entregaStatusEntregueClause} THEN 1 ELSE 0 END), 0), 0) AS entregues,
+        ROUND(COALESCE(SUM(CASE WHEN ${entregaStatusCanceladoClause} THEN 1 ELSE 0 END), 0), 0) AS cancelados
+      FROM motoboy_pedidos mp
+      LEFT JOIN motoboys m ON m.id = mp.motoboy_id
+      WHERE DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime') BETWEEN DATE(?) AND DATE(?)
+      GROUP BY COALESCE(NULLIF(TRIM(m.nome), ''), 'Sem motoboy')
+      ORDER BY total DESC, motoboy ASC
+    `)
+    .all(dataInicialAtual, dataFinalAtual)
+    .map((item) => ({
+      motoboy: item.motoboy,
+      total: Number(item.total || 0),
+      pendentes: Number(item.pendentes || 0),
+      atribuidos: Number(item.atribuidos || 0),
+      entregues: Number(item.entregues || 0),
+      cancelados: Number(item.cancelados || 0)
+    }));
+
+  const entregasDiarioMotoboy = db
+    .prepare(`
+      SELECT
+        DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime') AS data,
+        COALESCE(NULLIF(TRIM(m.nome), ''), 'Sem motoboy') AS motoboy,
+        COUNT(*) AS total,
+        ROUND(COALESCE(SUM(CASE WHEN ${entregaStatusEntregueClause} THEN 1 ELSE 0 END), 0), 0) AS entregues,
+        ROUND(COALESCE(SUM(CASE WHEN ${entregaStatusCanceladoClause} THEN 1 ELSE 0 END), 0), 0) AS cancelados
+      FROM motoboy_pedidos mp
+      LEFT JOIN motoboys m ON m.id = mp.motoboy_id
+      WHERE DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime') BETWEEN DATE(?) AND DATE(?)
+      GROUP BY
+        DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime'),
+        COALESCE(NULLIF(TRIM(m.nome), ''), 'Sem motoboy')
+      ORDER BY
+        DATE(COALESCE(mp.data_iso, mp.created_at), 'localtime') DESC,
+        total DESC,
+        motoboy ASC
+      LIMIT 300
+    `)
+    .all(dataInicialAtual, dataFinalAtual)
+    .map((item) => ({
+      data: item.data,
+      motoboy: item.motoboy,
+      total: Number(item.total || 0),
+      entregues: Number(item.entregues || 0),
+      cancelados: Number(item.cancelados || 0)
+    }));
+
+  const pedidosOnlineRows = db
+    .prepare(`
+      SELECT
+        id,
+        numero,
+        source,
+        payment,
+        external_id,
+        status,
+        detalhes_json,
+        data_iso,
+        created_at
+      FROM motoboy_pedidos
+      WHERE DATE(COALESCE(data_iso, created_at), 'localtime') BETWEEN DATE(?) AND DATE(?)
+      ORDER BY datetime(COALESCE(data_iso, created_at)) DESC, id DESC
+    `)
+    .all(dataInicialAtual, dataFinalAtual);
+
+  const pedidosOnline = pedidosOnlineRows
+    .map((row) => {
+      const detalhes = jsonSafeParse(row.detalhes_json);
+      const source = normalizeOnlineSource(row.source);
+      if (source !== "IFOOD" && source !== "NINENINE") return null;
+      const payment = String(row.payment || "NAO_INFORMADO")
+        .trim()
+        .toUpperCase();
+      const status = String(row.status || "NAO_INFORMADO")
+        .trim()
+        .toUpperCase();
+      const total = extractOnlineOrderTotal(row);
+      const dataIso = String(row.data_iso || row.created_at || "");
+      const numero = String(
+        row.numero ||
+          getPath(detalhes, ["display_id"]) ||
+          getPath(detalhes, ["order", "displayId"]) ||
+          getPath(detalhes, ["order", "display_id"]) ||
+          getPath(detalhes, ["order_id"]) ||
+          row.external_id ||
+          row.id ||
+          ""
+      ).trim();
+      const externalId = String(
+        row.external_id || getPath(detalhes, ["order_id"]) || getPath(detalhes, ["id"]) || ""
+      ).trim();
+      const cliente = String(
+        getPath(detalhes, ["customer_name"]) ||
+          getPath(detalhes, ["customer", "name"]) ||
+          getPath(detalhes, ["order", "customer", "name"]) ||
+          getPath(detalhes, ["delivery", "customer", "name"]) ||
+          ""
+      ).trim();
+      return {
+        id: Number(row.id || 0),
+        numero: numero || String(row.id || "-"),
+        external_id: externalId,
+        cliente,
+        source,
+        payment: payment || "NAO_INFORMADO",
+        status: status || "NAO_INFORMADO",
+        total,
+        data_hora: dataIso,
+        data: dataIso ? dataIso.slice(0, 10) : dataFinalAtual
+      };
+    })
+    .filter(Boolean);
+
+  const pedidosOnlineResumo = pedidosOnline.reduce(
+    (acc, item) => {
+      acc.pedidos += 1;
+      acc.valor_total += Number(item.total || 0);
+      if (item.status.includes("CANCEL")) {
+        acc.cancelados += 1;
+      }
+      return acc;
+    },
+    {
+      pedidos: 0,
+      valor_total: 0,
+      cancelados: 0
+    }
+  );
+  pedidosOnlineResumo.valor_total = Number(pedidosOnlineResumo.valor_total.toFixed(2));
+  pedidosOnlineResumo.ticket_medio =
+    pedidosOnlineResumo.pedidos > 0
+      ? Number((pedidosOnlineResumo.valor_total / pedidosOnlineResumo.pedidos).toFixed(2))
+      : 0;
+
+  const pedidosOnlinePorFonteMap = new Map();
+  const pedidosOnlinePorFormaMap = new Map();
+  const pedidosOnlinePorDiaMap = new Map();
+
+  for (const item of pedidosOnline) {
+    const sourceKey = item.source;
+    const formaKey = `${item.source}__${item.payment}`;
+    const diaKey = `${item.data}__${item.source}`;
+
+    const atualFonte = pedidosOnlinePorFonteMap.get(sourceKey) || {
+      source: sourceKey,
+      pedidos: 0,
+      valor_total: 0,
+      cancelados: 0
+    };
+    atualFonte.pedidos += 1;
+    atualFonte.valor_total += Number(item.total || 0);
+    if (item.status.includes("CANCEL")) atualFonte.cancelados += 1;
+    pedidosOnlinePorFonteMap.set(sourceKey, atualFonte);
+
+    const atualForma = pedidosOnlinePorFormaMap.get(formaKey) || {
+      source: item.source,
+      payment: item.payment,
+      pedidos: 0,
+      valor_total: 0
+    };
+    atualForma.pedidos += 1;
+    atualForma.valor_total += Number(item.total || 0);
+    pedidosOnlinePorFormaMap.set(formaKey, atualForma);
+
+    const atualDia = pedidosOnlinePorDiaMap.get(diaKey) || {
+      data: item.data,
+      source: item.source,
+      pedidos: 0,
+      valor_total: 0
+    };
+    atualDia.pedidos += 1;
+    atualDia.valor_total += Number(item.total || 0);
+    pedidosOnlinePorDiaMap.set(diaKey, atualDia);
+  }
+
+  const pedidosOnlinePorFonte = Array.from(pedidosOnlinePorFonteMap.values())
+    .map((item) => ({
+      source: item.source,
+      pedidos: Number(item.pedidos || 0),
+      cancelados: Number(item.cancelados || 0),
+      valor_total: Number(Number(item.valor_total || 0).toFixed(2)),
+      ticket_medio:
+        Number(item.pedidos || 0) > 0
+          ? Number((Number(item.valor_total || 0) / Number(item.pedidos || 0)).toFixed(2))
+          : 0
+    }))
+    .sort((a, b) => b.valor_total - a.valor_total);
+
+  const pedidosOnlinePorFormaPagamento = Array.from(pedidosOnlinePorFormaMap.values())
+    .map((item) => ({
+      source: item.source,
+      payment: item.payment,
+      pedidos: Number(item.pedidos || 0),
+      valor_total: Number(Number(item.valor_total || 0).toFixed(2)),
+      ticket_medio:
+        Number(item.pedidos || 0) > 0
+          ? Number((Number(item.valor_total || 0) / Number(item.pedidos || 0)).toFixed(2))
+          : 0
+    }))
+    .sort((a, b) => b.valor_total - a.valor_total);
+
+  const pedidosOnlinePorDia = Array.from(pedidosOnlinePorDiaMap.values())
+    .map((item) => ({
+      data: item.data,
+      source: item.source,
+      pedidos: Number(item.pedidos || 0),
+      valor_total: Number(Number(item.valor_total || 0).toFixed(2))
+    }))
+    .sort((a, b) => {
+      if (a.data === b.data) {
+        return a.source.localeCompare(b.source, "pt-BR");
+      }
+      return a.data.localeCompare(b.data);
+    });
+
+  const pedidosOnlineTotalRegistros = Number(pedidosOnline.length || 0);
+  const pedidosOnlineDetalhes = pedidosOnline
+    .slice(0, 500)
+    .map((item) => ({
+      id: Number(item.id || 0),
+      numero: String(item.numero || "-"),
+      external_id: String(item.external_id || ""),
+      cliente: String(item.cliente || ""),
+      source: item.source,
+      payment: item.payment,
+      status: item.status,
+      total: Number(item.total || 0),
+      data_hora: String(item.data_hora || ""),
+      data: item.data
+    }));
+
   const topProdutos = db
     .prepare(`
       SELECT
@@ -1040,6 +1459,15 @@ function obterRelatoriosGerenciaisPeriodo(periodo = {}) {
     topProdutos,
     topCategorias,
     desempenhoGarcom,
+    pedidosOnlineResumo,
+    pedidosOnlinePorFonte,
+    pedidosOnlinePorFormaPagamento,
+    pedidosOnlinePorDia,
+    pedidosOnlineTotalRegistros,
+    pedidosOnlineDetalhes,
+    entregasPorDia,
+    desempenhoMotoboy,
+    entregasDiarioMotoboy,
     statusMesas,
     caixaMovimentos,
     sessoesCaixa: {

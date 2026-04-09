@@ -64,7 +64,7 @@ function NoticeBar({ notice, onClose }) {
         alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
-        zIndex: 80
+        zIndex: 220
       }}
     >
       <span>{notice.text}</span>
@@ -144,6 +144,82 @@ function BrandMark() {
         <path d="M30 50l8-10 10 8 18-18" fill="none" stroke="#f4c35b" strokeWidth="5" strokeLinecap="round" />
       </svg>
     </div>
+  );
+}
+
+function DesktopTopbar({
+  titulo,
+  maximizada,
+  onMinimizar,
+  onAlternarMaximizacao,
+  onFechar
+}) {
+  return (
+    <div style={desktopTopbarWrapStyle}>
+      <div style={desktopTopbarDragAreaStyle}>
+        <div style={desktopTopbarBrandDotStyle} />
+        <span style={desktopTopbarTitleStyle}>{titulo || APP_NOME_PADRAO}</span>
+      </div>
+      <div style={desktopTopbarControlsStyle}>
+        <button
+          type="button"
+          aria-label="Minimizar janela"
+          onClick={onMinimizar}
+          style={desktopTopbarControlButtonStyle}
+        >
+          <WindowControlIcon type="minimize" />
+        </button>
+        <button
+          type="button"
+          aria-label={maximizada ? "Restaurar janela" : "Maximizar janela"}
+          onClick={onAlternarMaximizacao}
+          style={desktopTopbarControlButtonStyle}
+        >
+          <WindowControlIcon type={maximizada ? "restore" : "maximize"} />
+        </button>
+        <button
+          type="button"
+          aria-label="Fechar janela"
+          onClick={onFechar}
+          style={desktopTopbarCloseButtonStyle}
+        >
+          <WindowControlIcon type="close" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WindowControlIcon({ type }) {
+  if (type === "minimize") {
+    return (
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden>
+        <path d="M2 9h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (type === "restore") {
+    return (
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden>
+        <rect x="2.6" y="3.6" width="6.2" height="5.4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M4 2.6h5.4V8" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      </svg>
+    );
+  }
+
+  if (type === "close") {
+    return (
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden>
+        <path d="M3 3l6 6M9 3L3 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden>
+      <rect x="2.4" y="2.4" width="7.2" height="7.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
   );
 }
 
@@ -327,60 +403,96 @@ function LoginPanel() {
 
   return (
     <div style={loginPageStyle}>
-      <div style={loginCardStyle}>
-        <h2 style={{ marginTop: 0, fontFamily: "var(--font-heading)" }}>Acesso do Sistema</h2>
-        <p style={{ color: "#b8bdd4", marginTop: -4 }}>Entre com usuario e PIN para continuar.</p>
-
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 10 }}>
-          {usuarioOptions.length > 0 ? (
+      <div style={loginShellStyle}>
+        <section style={loginShowcaseStyle}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <BrandMark />
             <div>
-              <label style={loginLabelStyle}>Usuario</label>
-              <SelectField
-                value={usuarioId}
-                onChange={setUsuarioId}
-                options={usuarioOptions}
-                buttonStyle={selectLikeInputStyle}
-              />
+              <div style={loginShowcaseBadgeStyle}>GastroCode Brasil PDV</div>
+              <h1 style={loginShowcaseTitleStyle}>Operacao de restaurante sem atrasos no caixa</h1>
             </div>
-          ) : (
-            <div>
-              <label style={loginLabelStyle}>Apelido do usuario</label>
-              <input
-                value={apelido}
-                onChange={(e) => setApelido(e.target.value)}
-                placeholder="Ex.: gerente"
-                style={loginInputStyle}
-                autoComplete="username"
-              />
-            </div>
-          )}
-
-          <div>
-            <label style={loginLabelStyle}>PIN</label>
-            <input
-              type="password"
-              inputMode="numeric"
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
-              placeholder="4 a 8 numeros"
-              style={loginInputStyle}
-              autoComplete="current-password"
-            />
           </div>
 
-          {erro && (
-            <div style={{ border: "1px solid #9b3b4d", background: "#41161c", borderRadius: 10, padding: 10 }}>
-              {erro}
+          <p style={loginShowcaseTextStyle}>
+            Controle mesas, fechamento, impressao, historico e integracoes em uma unica tela.
+            Feito para atendimento rapido no salao e delivery.
+          </p>
+
+          <div style={loginFeatureGridStyle}>
+            <div style={loginFeatureCardStyle}>
+              <strong>Mesas e comandas</strong>
+              <small style={loginFeatureSmallStyle}>Abertura, fechamento e reabertura com rastreio.</small>
             </div>
-          )}
+            <div style={loginFeatureCardStyle}>
+              <strong>Financeiro vivo</strong>
+              <small style={loginFeatureSmallStyle}>Resumo de caixa e relatorios por periodo.</small>
+            </div>
+            <div style={loginFeatureCardStyle}>
+              <strong>Impressao termica</strong>
+              <small style={loginFeatureSmallStyle}>Pre-conta, comprovante e fechamento de caixa.</small>
+            </div>
+            <div style={loginFeatureCardStyle}>
+              <strong>Entrega online</strong>
+              <small style={loginFeatureSmallStyle}>Pedidos pendentes e despacho para motoboy.</small>
+            </div>
+          </div>
+        </section>
 
-          <button type="submit" style={loginButtonStyle(loading)} disabled={loading}>
-            {loading ? "Entrando..." : "Entrar"}
-          </button>
-        </form>
+        <div style={loginCardStyle}>
+          <h2 style={{ marginTop: 0, fontFamily: "var(--font-heading)" }}>Acesso do Sistema</h2>
+          <p style={{ color: "#b8bdd4", marginTop: -4 }}>Entre com usuario e PIN para continuar.</p>
 
-        <div style={{ marginTop: 12, color: "#aeb6d3", fontSize: 13 }}>
-          Dica inicial: `gerente/1234`, `garcom/1111`.
+          <form onSubmit={handleSubmit} style={{ display: "grid", gap: 10 }}>
+            {usuarioOptions.length > 0 ? (
+              <div>
+                <label style={loginLabelStyle}>Usuario</label>
+                <SelectField
+                  value={usuarioId}
+                  onChange={setUsuarioId}
+                  options={usuarioOptions}
+                  buttonStyle={selectLikeInputStyle}
+                />
+              </div>
+            ) : (
+              <div>
+                <label style={loginLabelStyle}>Apelido do usuario</label>
+                <input
+                  value={apelido}
+                  onChange={(e) => setApelido(e.target.value)}
+                  placeholder="Ex.: gerente"
+                  style={loginInputStyle}
+                  autoComplete="username"
+                />
+              </div>
+            )}
+
+            <div>
+              <label style={loginLabelStyle}>PIN</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                placeholder="4 a 8 numeros"
+                style={loginInputStyle}
+                autoComplete="current-password"
+              />
+            </div>
+
+            {erro && (
+              <div style={{ border: "1px solid #9b3b4d", background: "#41161c", borderRadius: 10, padding: 10 }}>
+                {erro}
+              </div>
+            )}
+
+            <button type="submit" style={loginButtonStyle(loading)} disabled={loading}>
+              {loading ? "Entrando..." : "Entrar"}
+            </button>
+          </form>
+
+          <div style={{ marginTop: 12, color: "#aeb6d3", fontSize: 13 }}>
+            Dica inicial: `gerente/1234`, `garcom/1111`.
+          </div>
         </div>
       </div>
     </div>
@@ -390,6 +502,7 @@ function LoginPanel() {
 function Layout() {
   const [pagina, setPagina] = useState("mesas");
   const [showLoadingHint, setShowLoadingHint] = useState(false);
+  const [janelaMaximizada, setJanelaMaximizada] = useState(false);
   const [changelogModal, setChangelogModal] = useState({
     open: false,
     version: "",
@@ -413,7 +526,15 @@ function Layout() {
   } = useApp();
   const isDesktop =
     typeof window !== "undefined" && Boolean(window?.desktopRuntime?.isDesktop);
+  const desktopWindowControls =
+    typeof window !== "undefined" ? window?.desktopRuntime?.windowControls || null : null;
   const desktopUpdater = typeof window !== "undefined" ? window?.desktopRuntime?.updater || null : null;
+  const topbarCustomDesktop =
+    isDesktop &&
+    desktopWindowControls &&
+    typeof desktopWindowControls.minimize === "function" &&
+    typeof desktopWindowControls.toggleMaximize === "function" &&
+    typeof desktopWindowControls.close === "function";
   const nomeLoja = String(configuracoes?.estabelecimento_nome || "").trim();
   const tituloTopo = nomeLoja || APP_NOME_PADRAO;
   const podeVerMesas = hasPermission("APP_MESAS_VER");
@@ -461,6 +582,35 @@ function Layout() {
     podeVerImpressao,
     podeVerConfiguracoes
   ]);
+
+  useEffect(() => {
+    if (!topbarCustomDesktop) return undefined;
+    let ativo = true;
+
+    async function sincronizarEstadoJanela() {
+      try {
+        const maximizada = await desktopWindowControls.isMaximized();
+        if (ativo) {
+          setJanelaMaximizada(Boolean(maximizada));
+        }
+      } catch {}
+    }
+
+    sincronizarEstadoJanela();
+    const unsubscribe =
+      typeof desktopWindowControls.onMaximizeChanged === "function"
+        ? desktopWindowControls.onMaximizeChanged((maximizada) => {
+            setJanelaMaximizada(Boolean(maximizada));
+          })
+        : null;
+
+    return () => {
+      ativo = false;
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
+  }, [topbarCustomDesktop, desktopWindowControls]);
 
   useEffect(() => {
     if (!isDesktop || !authUser || typeof localStorage === "undefined") return undefined;
@@ -531,6 +681,28 @@ function Layout() {
     setChangelogModal((prev) => ({ ...prev, open: false }));
   }
 
+  async function minimizarJanelaDesktop() {
+    if (!topbarCustomDesktop) return;
+    try {
+      await desktopWindowControls.minimize();
+    } catch {}
+  }
+
+  async function alternarMaximizacaoJanelaDesktop() {
+    if (!topbarCustomDesktop) return;
+    try {
+      const maximizada = await desktopWindowControls.toggleMaximize();
+      setJanelaMaximizada(Boolean(maximizada));
+    } catch {}
+  }
+
+  async function fecharJanelaDesktop() {
+    if (!topbarCustomDesktop) return;
+    try {
+      await desktopWindowControls.close();
+    } catch {}
+  }
+
   useEffect(() => {
     if (!loading) {
       setShowLoadingHint(false);
@@ -559,16 +731,7 @@ function Layout() {
     Number.isFinite(licencaDiasRestantes) &&
     licencaDiasRestantes >= 0 &&
     licencaDiasRestantes <= 15;
-  const licencaTextoResumo = (() => {
-    if (!licencaAtiva) return "Licenca inativa";
-    if (Number.isFinite(licencaDiasRestantes)) {
-      return `Licenca: ${licencaDiasRestantes} dia(s) restantes`;
-    }
-    if (licencaInfo?.licenca?.expira_em) {
-      return `Licenca expira em ${new Date(licencaInfo.licenca.expira_em).toLocaleDateString("pt-BR")}`;
-    }
-    return "Licenca ativa (sem expiracao)";
-  })();
+  const mostrarFaixaLicenca = licencaExpiraEmBreve;
   const renovacaoWhatsappHref = useMemo(() => montarLinkRenovacao(licencaInfo), [licencaInfo]);
 
   if (!authReady || licencaInfo?.loading) {
@@ -588,101 +751,134 @@ function Layout() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        width: "100%",
-        overflowX: "hidden",
+      <div
+        style={{
+          minHeight: "100vh",
+          width: "100%",
         maxWidth: "100vw",
         boxSizing: "border-box",
         background: "radial-gradient(circle at top, #1b1c2a 0%, #0b0b0b 55%)",
         color: "#fff",
-        padding: `20px clamp(12px, 2vw, 20px) 20px`,
+        padding: topbarCustomDesktop
+          ? `14px clamp(12px, 2vw, 20px) 20px`
+          : `20px clamp(12px, 2vw, 20px) 20px`,
         fontFamily: "var(--font-body)",
         colorScheme: "dark"
-      }}
-    >
-      <header
-        style={{
-          display: "grid",
-          gap: 12,
-          marginBottom: 16,
-          padding: "14px clamp(12px, 1.6vw, 18px)",
-          borderRadius: 18,
-          border: "1px solid #2b345a",
-          background:
-            "linear-gradient(120deg, rgba(27, 31, 54, 0.95) 0%, rgba(17, 20, 37, 0.94) 55%, rgba(13, 16, 29, 0.96) 100%)",
-          boxShadow: "0 16px 34px rgba(0, 0, 0, 0.35)"
         }}
       >
-        <div style={brandHeaderStyle}>
-          <BrandMark />
-          <div>
-            <h1 style={{ margin: 0, fontFamily: "var(--font-heading)" }}>{tituloTopo}</h1>
-            <small style={{ color: "#b8bdd4" }}>
-              Operacao de salao, historico de contas e resumo financeiro
+      {topbarCustomDesktop ? (
+        <div style={{ position: "sticky", top: 10, zIndex: 148, marginBottom: 8 }}>
+          <DesktopTopbar
+            titulo={tituloTopo}
+            maximizada={janelaMaximizada}
+            onMinimizar={minimizarJanelaDesktop}
+            onAlternarMaximizacao={alternarMaximizacaoJanelaDesktop}
+            onFechar={fecharJanelaDesktop}
+          />
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          marginBottom: 12
+        }}
+      >
+        <header
+          style={{
+            display: "grid",
+            gap: 10,
+            marginBottom: 2,
+            padding: "12px clamp(12px, 1.6vw, 18px)",
+            borderRadius: 16,
+            border: "1px solid #324171",
+            background:
+              "linear-gradient(118deg, #182245 0%, #0f162e 56%, #0b1022 100%)",
+            boxShadow: "0 14px 30px rgba(0, 0, 0, 0.34)"
+          }}
+        >
+          <div style={brandHeaderStyle}>
+            <div style={brandIdentityStyle}>
+              <BrandMark />
+              <div style={{ minWidth: 0 }}>
+                <h1 style={topTitleStyle}>{tituloTopo}</h1>
+                <small style={topSubtitleStyle}>
+                  Operacao de salao, historico de contas e resumo financeiro
+                </small>
+              </div>
+            </div>
+            <small style={topHeaderHintStyle}>
+              {showLoadingHint ? "Sincronizando dados..." : "Pronto para operacao"}
             </small>
           </div>
+        </header>
+      </div>
+
+      <nav
+        style={{
+          ...topNavShellStyle,
+          position: "sticky",
+          top: topbarCustomDesktop ? 56 : 10,
+          zIndex: 147,
+          marginBottom: 12
+        }}
+      >
+        <div style={userBadgeStyle}>
+          {authUser.nome} ({role})
         </div>
 
-        <nav style={topNavShellStyle}>
-          <div style={userBadgeStyle}>
-            {authUser.nome} ({role})
-            <div style={userBadgeSubStyle}>{licencaTextoResumo}</div>
-          </div>
+        <div style={topNavActionsStyle}>
+          {podeVerMesas && (
+            <button onClick={() => setPagina("mesas")} style={navButton(pagina === "mesas")}>
+              Mesas
+            </button>
+          )}
 
-          <div style={topNavActionsStyle}>
-            {podeVerMesas && (
-              <button onClick={() => setPagina("mesas")} style={navButton(pagina === "mesas")}>
-                Mesas
-              </button>
-            )}
+          {podeVerEntregas && (
+            <button onClick={() => setPagina("entregas")} style={navButton(pagina === "entregas")}>
+              Online
+            </button>
+          )}
 
-            {podeVerEntregas && (
-              <button onClick={() => setPagina("entregas")} style={navButton(pagina === "entregas")}>
-                Online
-              </button>
-            )}
+          {podeVerFinanceiro && (
+            <button onClick={() => setPagina("financeiro")} style={navButton(pagina === "financeiro")}>
+              Financeiro
+            </button>
+          )}
 
-            {podeVerFinanceiro && (
-              <button onClick={() => setPagina("financeiro")} style={navButton(pagina === "financeiro")}>
-                Financeiro
-              </button>
-            )}
+          {podeVerRelatorios && (
+            <button onClick={() => setPagina("relatorios")} style={navButton(pagina === "relatorios")}>
+              Relatorios
+            </button>
+          )}
 
-            {podeVerRelatorios && (
-              <button onClick={() => setPagina("relatorios")} style={navButton(pagina === "relatorios")}>
-                Relatorios
-              </button>
-            )}
+          {podeVerHistorico && (
+            <button onClick={() => setPagina("historico")} style={navButton(pagina === "historico")}>
+              Historico
+            </button>
+          )}
 
-            {podeVerHistorico && (
-              <button onClick={() => setPagina("historico")} style={navButton(pagina === "historico")}>
-                Historico
-              </button>
-            )}
+          {podeVerImpressao && (
+            <button onClick={() => setPagina("impressao")} style={navButton(pagina === "impressao")}>
+              Impressao
+            </button>
+          )}
 
-            {podeVerImpressao && (
-              <button onClick={() => setPagina("impressao")} style={navButton(pagina === "impressao")}>
-                Impressao
-              </button>
-            )}
+          {podeVerConfiguracoes && (
+            <button onClick={() => setPagina("configuracoes")} style={navButton(pagina === "configuracoes")}>
+              Configuracoes
+            </button>
+          )}
+        </div>
 
-            {podeVerConfiguracoes && (
-              <button onClick={() => setPagina("configuracoes")} style={navButton(pagina === "configuracoes")}>
-                Configuracoes
-              </button>
-            )}
-          </div>
-
-          <button onClick={logoutSessao} style={logoutButtonStyle}>
-            Sair
-          </button>
-        </nav>
-      </header>
+        <button onClick={logoutSessao} style={logoutButtonStyle}>
+          Sair
+        </button>
+      </nav>
 
       {!apiOnline && <ApiOfflineBar onRetry={sincronizarAgora} />}
-      {licencaAtiva && (
+      {mostrarFaixaLicenca && (
         <div
           style={{
             ...licencaAvisoStyle,
@@ -772,35 +968,143 @@ function LoadingPill() {
 
 function navButton(active) {
   return {
-    minHeight: 40,
-    padding: "8px 12px",
-    borderRadius: 12,
-    border: active ? "1px solid #5f95ff" : "1px solid #3f4b76",
+    minHeight: 38,
+    padding: "7px 12px",
+    borderRadius: 11,
+    border: active ? "1px solid #74a8ff" : "1px solid #3d4c82",
     background: active
-      ? "linear-gradient(120deg, #2e63f4 0%, #4b7dff 100%)"
-      : "linear-gradient(120deg, #181f3f 0%, #101733 100%)",
-    color: "#fff",
+      ? "linear-gradient(120deg, #2f6fff 0%, #4d86ff 100%)"
+      : "linear-gradient(120deg, #182246 0%, #101938 100%)",
+    color: "#f7f9ff",
     cursor: "pointer",
     fontWeight: 700,
     fontSize: 14,
     letterSpacing: "0.1px",
-    boxShadow: active ? "0 10px 20px rgba(46, 99, 244, 0.34)" : "0 4px 12px rgba(0, 0, 0, 0.16)"
+    boxShadow: active ? "0 8px 16px rgba(49, 112, 255, 0.34)" : "0 2px 8px rgba(0, 0, 0, 0.18)"
   };
 }
 
+const desktopTopbarWrapStyle = {
+  height: 38,
+  position: "relative",
+  zIndex: 1,
+  display: "flex",
+  alignItems: "stretch",
+  justifyContent: "space-between",
+  gap: 4,
+  border: "1px solid #2f3f72",
+  borderRadius: 10,
+  background: "linear-gradient(120deg, rgba(16, 24, 50, 0.96) 0%, rgba(11, 17, 36, 0.96) 100%)",
+  boxShadow: "0 6px 14px rgba(0, 0, 0, 0.28)",
+  marginBottom: 0
+};
+
+const desktopTopbarDragAreaStyle = {
+  flex: 1,
+  minWidth: 0,
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "0 12px",
+  WebkitAppRegion: "drag",
+  userSelect: "none"
+};
+
+const desktopTopbarBrandDotStyle = {
+  width: 8,
+  height: 8,
+  borderRadius: 999,
+  background: "linear-gradient(120deg, #5be3b0 0%, #2e63f4 100%)",
+  boxShadow: "0 0 10px rgba(72, 138, 255, 0.55)"
+};
+
+const desktopTopbarTitleStyle = {
+  fontSize: 12,
+  color: "#cfd9fa",
+  fontWeight: 700,
+  letterSpacing: "0.15px",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis"
+};
+
+const desktopTopbarControlsStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  padding: "4px 4px 4px 0",
+  WebkitAppRegion: "no-drag"
+};
+
+const desktopTopbarControlButtonStyle = {
+  minWidth: 30,
+  width: 30,
+  height: 28,
+  borderRadius: 8,
+  border: "1px solid #3a4f8b",
+  background: "linear-gradient(140deg, #1d2c5e 0%, #17234a 100%)",
+  color: "#e3ecff",
+  fontWeight: 700,
+  fontSize: 12,
+  cursor: "pointer",
+  display: "grid",
+  placeItems: "center",
+  boxShadow: "0 3px 8px rgba(0, 0, 0, 0.2)"
+};
+
+const desktopTopbarCloseButtonStyle = {
+  ...desktopTopbarControlButtonStyle,
+  border: "1px solid #a24a63",
+  background: "linear-gradient(140deg, #6a2a3d 0%, #542030 100%)",
+  color: "#ffeaf0"
+};
+
 const brandHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  minWidth: 0,
+  flexWrap: "wrap"
+};
+
+const brandIdentityStyle = {
   display: "flex",
   alignItems: "center",
   gap: 12,
   minWidth: 0
 };
 
+const topTitleStyle = {
+  margin: 0,
+  fontFamily: "var(--font-heading)",
+  fontSize: "clamp(34px, 3.2vw, 52px)",
+  lineHeight: 1.04,
+  letterSpacing: "-0.35px"
+};
+
+const topSubtitleStyle = {
+  color: "#b6c1e6",
+  marginTop: 2,
+  display: "inline-block"
+};
+
+const topHeaderHintStyle = {
+  color: "#93a5db",
+  fontSize: 12,
+  fontWeight: 700,
+  padding: "4px 10px",
+  borderRadius: 999,
+  border: "1px solid #364982",
+  background: "rgba(18, 28, 61, 0.75)"
+};
+
 const brandMarkWrapStyle = {
   width: 46,
   height: 46,
   borderRadius: 14,
-  border: "1px solid #3a446e",
-  background: "linear-gradient(145deg, #1a2448 0%, #121a34 100%)",
+  border: "1px solid #3f4f85",
+  background: "linear-gradient(145deg, #1a2a57 0%, #121f42 100%)",
   display: "grid",
   placeItems: "center",
   boxShadow: "0 6px 18px rgba(0, 0, 0, 0.35)"
@@ -812,11 +1116,11 @@ const topNavShellStyle = {
   alignItems: "center",
   flexWrap: "wrap",
   minWidth: 0,
-  border: "1px solid #2f3c67",
-  borderRadius: 16,
-  background: "linear-gradient(120deg, rgba(17, 24, 49, 0.86) 0%, rgba(9, 14, 29, 0.76) 100%)",
-  padding: 8,
-  boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.04)"
+  border: "1px solid #34457b",
+  borderRadius: 14,
+  background: "linear-gradient(120deg, #111935 0%, #0b1125 100%)",
+  padding: "8px 9px",
+  boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.05)"
 };
 
 const topNavActionsStyle = {
@@ -824,7 +1128,7 @@ const topNavActionsStyle = {
   gap: 8,
   alignItems: "center",
   flexWrap: "wrap",
-  flex: "1 1 280px",
+  flex: "1 1 320px",
   minWidth: 0
 };
 
@@ -839,18 +1143,85 @@ const loginPageStyle = {
   minHeight: "100vh",
   display: "grid",
   placeItems: "center",
-  padding: 20,
+  padding: "20px clamp(14px, 2vw, 26px)",
   background: "radial-gradient(circle at top, #1b1c2a 0%, #0b0b0b 55%)",
   color: "#fff",
   fontFamily: "var(--font-body)"
 };
 
+const loginShellStyle = {
+  width: "min(1120px, 100%)",
+  display: "grid",
+  gap: 14,
+  gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
+  alignItems: "stretch"
+};
+
+const loginShowcaseStyle = {
+  border: "1px solid #2f3f74",
+  borderRadius: 18,
+  background:
+    "linear-gradient(130deg, rgba(18, 31, 69, 0.95) 0%, rgba(14, 22, 47, 0.93) 52%, rgba(10, 15, 35, 0.95) 100%)",
+  boxShadow: "0 16px 34px rgba(0, 0, 0, 0.33)",
+  padding: "22px clamp(14px, 2vw, 24px)",
+  display: "grid",
+  gap: 14
+};
+
+const loginShowcaseBadgeStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "5px 11px",
+  borderRadius: 999,
+  border: "1px solid #4d6fcb",
+  background: "rgba(31, 65, 153, 0.34)",
+  fontSize: 12,
+  fontWeight: 800,
+  color: "#d7e5ff"
+};
+
+const loginShowcaseTitleStyle = {
+  margin: "7px 0 0",
+  fontFamily: "var(--font-heading)",
+  fontSize: "clamp(26px, 3vw, 38px)",
+  lineHeight: 1.08
+};
+
+const loginShowcaseTextStyle = {
+  margin: 0,
+  color: "#b5c3ea",
+  lineHeight: 1.5,
+  maxWidth: 640
+};
+
+const loginFeatureGridStyle = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(2, minmax(180px, 1fr))"
+};
+
+const loginFeatureCardStyle = {
+  border: "1px solid #334a87",
+  borderRadius: 12,
+  background: "linear-gradient(125deg, rgba(19, 35, 79, 0.78) 0%, rgba(15, 24, 53, 0.82) 100%)",
+  padding: "10px 11px",
+  display: "grid",
+  gap: 4
+};
+
+const loginFeatureSmallStyle = {
+  color: "#a7b5de",
+  lineHeight: 1.35
+};
+
 const loginCardStyle = {
-  width: "min(100%, 420px)",
-  border: "1px solid #2f3553",
-  borderRadius: 16,
-  background: "rgba(17, 20, 33, 0.86)",
-  padding: 18
+  width: "100%",
+  border: "1px solid #324171",
+  borderRadius: 18,
+  background:
+    "linear-gradient(130deg, rgba(18, 28, 62, 0.95) 0%, rgba(15, 22, 46, 0.93) 62%, rgba(12, 18, 39, 0.95) 100%)",
+  boxShadow: "0 14px 30px rgba(0, 0, 0, 0.34)",
+  padding: "18px clamp(14px, 1.7vw, 20px)"
 };
 
 const loginLabelStyle = {
@@ -884,38 +1255,31 @@ function loginButtonStyle(disabled) {
 }
 
 const userBadgeStyle = {
-  border: "1px solid #3a4266",
+  border: "1px solid #44558f",
   borderRadius: 12,
-  background: "linear-gradient(120deg, #151a31 0%, #10172f 100%)",
-  padding: "8px 10px",
+  background: "linear-gradient(120deg, #1a244a 0%, #131d3d 100%)",
+  padding: "7px 10px",
   fontSize: 13,
-  color: "#d9e0fb",
+  color: "#e0e8ff",
   whiteSpace: "nowrap",
-  maxWidth: 220,
+  maxWidth: 240,
   overflow: "hidden",
   textOverflow: "ellipsis",
-  display: "grid",
-  gap: 2
-};
-
-const userBadgeSubStyle = {
-  fontSize: 11,
-  color: "#aeb8dd",
   fontWeight: 700
 };
 
 const logoutButtonStyle = {
-  minHeight: 40,
-  padding: "8px 13px",
-  borderRadius: 12,
-  border: "1px solid #94495d",
-  background: "linear-gradient(120deg, #5e2535 0%, #7f3247 100%)",
+  minHeight: 38,
+  padding: "7px 13px",
+  borderRadius: 11,
+  border: "1px solid #a14a62",
+  background: "linear-gradient(120deg, #68273b 0%, #863249 100%)",
   color: "#ffe9ee",
   cursor: "pointer",
   fontWeight: 800,
   fontSize: 14,
   whiteSpace: "nowrap",
-  boxShadow: "0 8px 16px rgba(122, 47, 68, 0.35)"
+  boxShadow: "0 6px 14px rgba(122, 47, 68, 0.35)"
 };
 
 const statusBoxStyle = {

@@ -801,7 +801,7 @@ function asideStyle(touchMode, alturaAside = null, janelaOpen = false) {
       display: "flex",
       flexDirection: "column",
       gap: 10,
-      zIndex: 110,
+      zIndex: 132,
       boxShadow: "0 18px 44px rgba(0, 0, 0, 0.48)"
     };
   }
@@ -1043,7 +1043,7 @@ const modalProdutosOverlayStyle = {
   inset: 0,
   background: "rgba(5, 8, 18, 0.78)",
   backdropFilter: "blur(2px)",
-  zIndex: 120,
+  zIndex: 133,
   display: "grid",
   placeItems: "center",
   padding: 16
@@ -1054,7 +1054,7 @@ const mesaJanelaBackdropStyle = {
   inset: 0,
   background: "rgba(6, 9, 20, 0.72)",
   backdropFilter: "blur(2px)",
-  zIndex: 109
+  zIndex: 131
 };
 
 const painelMesaFechadoStyle = {

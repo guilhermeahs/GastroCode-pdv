@@ -75,7 +75,51 @@ const PAYMENT_MAP = {
   APP: "ONLINE"
 };
 
+const DEFAULT_MANUAL_CANCEL_OPTIONS = [
+  {
+    code: "OUT_OF_STOCK",
+    label: "Item indisponivel",
+    subreasons: [
+      { code: "MAIN_ITEM_UNAVAILABLE", label: "Item principal indisponivel" },
+      { code: "COMPLEMENT_UNAVAILABLE", label: "Complemento indisponivel" }
+    ]
+  },
+  {
+    code: "STORE_CLOSED",
+    label: "Loja fechada",
+    subreasons: [
+      { code: "OUTSIDE_OPENING_HOURS", label: "Fora do horario de funcionamento" },
+      { code: "UNEXPECTED_CLOSURE", label: "Fechamento inesperado" }
+    ]
+  },
+  {
+    code: "DELIVERY_AREA_UNAVAILABLE",
+    label: "Area de entrega indisponivel",
+    subreasons: [
+      { code: "AREA_BLOCKED", label: "Area temporariamente bloqueada" },
+      { code: "NO_COURIER", label: "Sem entregador disponivel" }
+    ]
+  },
+  {
+    code: "OPERATIONAL_ISSUE",
+    label: "Problema operacional",
+    subreasons: [
+      { code: "SYSTEM_ISSUE", label: "Instabilidade no sistema" },
+      { code: "PRODUCTION_DELAY", label: "Atraso de producao" }
+    ]
+  },
+  {
+    code: "CUSTOMER_REQUEST",
+    label: "Solicitacao do cliente",
+    subreasons: [
+      { code: "WRONG_ADDRESS", label: "Endereco incorreto" },
+      { code: "CUSTOMER_GAVE_UP", label: "Cliente desistiu do pedido" }
+    ]
+  }
+];
+
 const ORDER_CACHE_TTL_MS = 15 * 1000;
+let ifoodSyncRunning = false;
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS ifood_event_logs (
@@ -223,6 +267,173 @@ function parseJsonSafe(raw, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function compactObject(value = {}) {
+  const input = value && typeof value === "object" ? value : {};
+  const output = {};
+  for (const [key, item] of Object.entries(input)) {
+    if (item === undefined || item === null || item === "") continue;
+    output[key] = item;
+  }
+  return output;
+}
+
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeTextKey(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function isGeneratedCancellationCode(code = "") {
+  const txt = String(code || "").trim().toUpperCase();
+  if (!txt) return true;
+  return /^REASON_\d+$/.test(txt) || /^SUBREASON_\d+$/.test(txt);
+}
+
+function normalizeCancellationSubreason(entry, idx) {
+  const obj = entry && typeof entry === "object" ? entry : {};
+  const code = pick(
+    obj?.code,
+    obj?.reasonCode,
+    obj?.reason_code,
+    obj?.subreasonCode,
+    obj?.subReasonCode,
+    obj?.subreason_code,
+    obj?.cancellationCode,
+    obj?.cancellation_code,
+    obj?.value,
+    obj?.key,
+    obj?.metadata?.code,
+    obj?.subCode,
+    obj?.id,
+    typeof entry === "string" ? entry : ""
+  )
+    .trim()
+    .slice(0, 100);
+  const label = pick(
+    obj?.label,
+    obj?.name,
+    obj?.description,
+    obj?.reason,
+    code
+  )
+    .trim()
+    .slice(0, 160);
+  const safeCode = code || `SUBREASON_${idx + 1}`;
+  const safeLabel = label || safeCode;
+  return {
+    code: safeCode,
+    label: safeLabel
+  };
+}
+
+function normalizeCancellationOption(entry, idx) {
+  const obj = entry && typeof entry === "object" ? entry : {};
+  const code = pick(
+    obj?.cancelCodeId,
+    obj?.code,
+    obj?.reasonCode,
+    obj?.reason_code,
+    obj?.cancellationCode,
+    obj?.cancellation_code,
+    obj?.cancellationReasonCode,
+    obj?.cancellation_reason_code,
+    obj?.reason?.code,
+    obj?.reason?.reasonCode,
+    obj?.metadata?.code,
+    obj?.key,
+    obj?.value,
+    obj?.codeValue,
+    obj?.id,
+    typeof entry === "string" ? entry : ""
+  )
+    .trim()
+    .slice(0, 100);
+  const label = pick(
+    obj?.description,
+    obj?.label,
+    obj?.name,
+    obj?.description,
+    obj?.reason,
+    obj?.title,
+    obj?.displayName,
+    obj?.reason?.label,
+    obj?.reason?.name,
+    code
+  )
+    .trim()
+    .slice(0, 180);
+  const safeCode = code;
+  const safeLabel = label || code || `REASON_${idx + 1}`;
+
+  if (!safeCode) {
+    return null;
+  }
+
+  const rawSub = [
+    ...toArray(obj?.subreasons),
+    ...toArray(obj?.subReasons),
+    ...toArray(obj?.sub_reasons),
+    ...toArray(obj?.subReasonsList),
+    ...toArray(obj?.cancellationSubreasons),
+    ...toArray(obj?.cancellationSubReasons),
+    ...toArray(obj?.children),
+    ...toArray(obj?.items)
+  ];
+  const dedupe = new Set();
+  const subreasons = rawSub
+    .map((sub, subIdx) => normalizeCancellationSubreason(sub, subIdx))
+    .filter((sub) => {
+      const key = String(sub.code || "").trim().toUpperCase();
+      if (!key) return false;
+      if (dedupe.has(key)) return false;
+      dedupe.add(key);
+      return true;
+    });
+
+  return {
+    code: safeCode,
+    label: safeLabel,
+    subreasons
+  };
+}
+
+function normalizeCancellationOptionsPayload(payload) {
+  const root = payload && typeof payload === "object" ? payload : {};
+  const rows = [
+    ...toArray(payload),
+    ...toArray(root?.items),
+    ...toArray(root?.reasons),
+    ...toArray(root?.cancellationReasons),
+    ...toArray(root?.cancelReasons),
+    ...toArray(root?.data)
+  ];
+  const dedupe = new Set();
+  const normalized = rows
+    .map((row, idx) => normalizeCancellationOption(row, idx))
+    .filter(Boolean)
+    .filter((item) => {
+      const key = String(item.code || "").trim().toUpperCase();
+      if (!key) return false;
+      if (dedupe.has(key)) return false;
+      dedupe.add(key);
+      return true;
+    });
+
+  return normalized;
+}
+
+function defaultCancellationOptions() {
+  return DEFAULT_MANUAL_CANCEL_OPTIONS.map((item, idx) =>
+    normalizeCancellationOption(item, idx)
+  ).filter(Boolean);
 }
 
 function formatNetworkError(url, error) {
@@ -937,25 +1148,56 @@ function inferOrderType(order = {}) {
 }
 
 function extractScheduling(order = {}) {
-  const modeRaw = pick(order?.orderTiming?.mode, order?.timing?.mode, order?.schedule?.mode, order?.mode);
-  const mode = String(modeRaw || "")
+  const timingRaw = pick(order?.orderTiming, order?.timing, order?.schedule?.mode, order?.mode);
+  const modeText =
+    timingRaw && typeof timingRaw === "object"
+      ? pick(timingRaw?.mode, timingRaw?.type, timingRaw?.kind, timingRaw?.value)
+      : timingRaw;
+  const mode = String(modeText || "")
     .trim()
     .toUpperCase()
     .replace(/\s+/g, "_");
-  const scheduledAtRaw = pick(
-    order?.orderTiming?.scheduledDateTime,
-    order?.orderTiming?.scheduleDateTime,
+  const isImmediateMode = mode.includes("IMMEDIATE") || mode.includes("ASAP");
+  const isScheduledMode = mode.includes("SCHEDULE");
+
+  const scheduleStartRaw = pick(
+    order?.schedule?.deliveryDateTimeStart,
+    order?.schedule?.dateTimeStart,
     order?.schedule?.scheduledDateTime,
     order?.schedule?.dateTime,
+    order?.orderTiming?.scheduledDateTime,
+    order?.orderTiming?.scheduleDateTime,
     order?.scheduledAt,
-    order?.scheduled_for,
-    order?.delivery?.deliveryDateTime
+    order?.scheduled_for
   );
-  const isScheduled = mode.includes("SCHEDULE") || Boolean(scheduledAtRaw);
+  const scheduleEndRaw = pick(
+    order?.schedule?.deliveryDateTimeEnd,
+    order?.schedule?.dateTimeEnd,
+    order?.orderTiming?.scheduledDateTimeEnd,
+    order?.orderTiming?.scheduleDateTimeEnd
+  );
+  const deliveryEtaRaw = pick(
+    order?.delivery?.deliveryDateTime,
+    order?.takeout?.takeoutDateTime,
+    order?.dineIn?.deliveryDateTime,
+    order?.indoor?.deliveryDateTime
+  );
+
+  const hasScheduleWindow = Boolean(scheduleStartRaw || scheduleEndRaw);
+  const isScheduled = !isImmediateMode && (isScheduledMode || hasScheduleWindow);
+  const scheduleStartIso = isScheduled && scheduleStartRaw ? safeIso(scheduleStartRaw) : null;
+  const scheduleEndIso = isScheduled && scheduleEndRaw ? safeIso(scheduleEndRaw) : null;
+  const scheduledAtIso =
+    scheduleStartIso || (isScheduled && deliveryEtaRaw ? safeIso(deliveryEtaRaw) : null);
+  const deliveryEtaIso = !isScheduled && deliveryEtaRaw ? safeIso(deliveryEtaRaw) : null;
+
   return {
-    mode: mode || "IMMEDIATE",
+    mode: mode || (isScheduled ? "SCHEDULED" : "IMMEDIATE"),
     is_scheduled: Boolean(isScheduled),
-    scheduled_at: isScheduled ? safeIso(scheduledAtRaw) : null
+    scheduled_at: scheduledAtIso,
+    scheduled_window_start: scheduleStartIso,
+    scheduled_window_end: scheduleEndIso,
+    delivery_eta_at: deliveryEtaIso
   };
 }
 
@@ -1015,9 +1257,24 @@ function extractCustomer(order = {}) {
   const document = pick(
     customer?.documentNumber,
     customer?.document,
+    customer?.document_number,
+    customer?.documento,
+    customer?.cpf,
+    customer?.cnpj,
     customer?.taxPayerIdentificationNumber,
+    customer?.taxpayerIdentificationNumber,
     customer?.cpfCnpj,
+    order?.customer?.documentNumber,
+    order?.customer?.document,
+    order?.customer?.document_number,
+    order?.customer?.documento,
+    order?.customer?.cpf,
+    order?.customer?.cnpj,
     order?.invoice?.documentNumber,
+    order?.invoice?.document,
+    order?.invoice?.document_number,
+    order?.invoice?.cpf,
+    order?.invoice?.cnpj,
     order?.invoice?.cpfCnpj
   );
   return {
@@ -1035,12 +1292,31 @@ function extractOrderItems(order = {}) {
         const quantity = Number(item?.quantity ?? item?.qty ?? item?.amount ?? 1);
         const unit = toMoney(pick(item?.unitPrice, item?.price, item?.value), 0);
         const total = toMoney(pick(item?.total, item?.totalPrice, item?.priceTotal), unit * (quantity || 1));
+        const observation = pick(
+          item?.observation,
+          item?.observations,
+          item?.notes,
+          item?.comment,
+          item?.note,
+          item?.instructions,
+          item?.specialInstructions,
+          item?.customerNotes,
+          item?.customerNote,
+          item?.additionalInfo
+        );
         return {
           sku: String(pick(item?.sku, item?.id, item?.code) || "").trim().slice(0, 60),
           nome: String(pick(item?.name, item?.description, item?.title) || "").trim().slice(0, 120),
           quantidade: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
           preco_unitario: Number(unit || 0),
-          total: Number(total || 0)
+          total: Number(total || 0),
+          observacao: String(observation || "").trim().slice(0, 240),
+          options: toArray(item?.options).slice(0, 24),
+          modifiers: toArray(item?.modifiers).slice(0, 24),
+          addons: toArray(item?.addons).slice(0, 24),
+          extras: toArray(item?.extras).slice(0, 24),
+          complements: toArray(item?.complements).slice(0, 24),
+          customizations: toArray(item?.customizations).slice(0, 24)
         };
       })
       .filter((item) => item.nome);
@@ -1159,7 +1435,17 @@ function buildOrderResumo(order = {}, fallbackOrderId = "", payment = "ONLINE") 
     order?.observation,
     order?.observations,
     order?.notes,
+    order?.comment,
+    order?.comments,
+    order?.instructions,
+    order?.specialInstructions,
     order?.additionalInfo,
+    order?.delivery?.observation,
+    order?.delivery?.observations,
+    order?.delivery?.instructions,
+    order?.delivery?.notes,
+    order?.customer?.observation,
+    order?.customer?.observations,
     order?.customer?.notes
   );
   const status = normalizeOrderStatus(pick(order?.orderStatus, order?.status, order?.state, "RECEIVED"));
@@ -1221,6 +1507,10 @@ function normalizeOrderToEntrega(order = {}, fallbackOrderId = "", config = null
   const payment = singlePaymentFromOrder(order);
   const motoboy = pick(cfg.motoboy_fallback, "iFood");
   const resumo = buildOrderResumo(order, fallbackOrderId, payment);
+  const scheduling = resumo?.scheduling && typeof resumo.scheduling === "object" ? resumo.scheduling : {};
+  const whenISOBase = scheduling?.is_scheduled
+    ? pick(scheduling?.scheduled_window_start, scheduling?.scheduled_at, createdAt)
+    : pick(createdAt, scheduling?.delivery_eta_at, scheduling?.scheduled_at);
 
   if (!numero) {
     throw new Error("Nao foi possivel identificar numero do pedido iFood.");
@@ -1232,7 +1522,7 @@ function normalizeOrderToEntrega(order = {}, fallbackOrderId = "", config = null
       numero: String(numero).slice(0, 80),
       source: "IFOOD",
       payment,
-      whenISO: safeIso(createdAt),
+      whenISO: safeIso(whenISOBase),
       external_id: String(resumo.order_id || "").slice(0, 120),
       status: String(resumo.status || "RECEIVED").slice(0, 48),
       detalhes: resumo
@@ -1289,6 +1579,561 @@ async function fetchOrderDetails(orderId, token, config = null, options = {}) {
   const fallbackPayload = { id: orderIdText };
   saveCachedOrder(orderIdText, fallbackPayload);
   return fallbackPayload;
+}
+
+function isLikelyAlreadyLifecycleActionError(error) {
+  const code = Number(error?.statusCode || 0);
+  const msg = String(error?.message || "").toLowerCase();
+  if (code === 409 || code === 422) return true;
+  return (
+    msg.includes("already") ||
+    msg.includes("already dispatched") ||
+    msg.includes("already confirmed") ||
+    msg.includes("already ready") ||
+    msg.includes("already in") ||
+    msg.includes("invalid transition") ||
+    msg.includes("cannot transition")
+  );
+}
+
+function isLikelyAlreadyCancelledError(error) {
+  const code = Number(error?.statusCode || 0);
+  const msg = String(error?.message || "").toLowerCase();
+  if (code === 409 || code === 410 || code === 422) return true;
+  return (
+    msg.includes("already") ||
+    msg.includes("already canceled") ||
+    msg.includes("already cancelled") ||
+    msg.includes("already canceled order") ||
+    msg.includes("invalid transition") ||
+    msg.includes("cannot transition")
+  );
+}
+
+function normalizeLifecycleAction(action = "") {
+  const raw = String(action || "")
+    .trim()
+    .toLowerCase();
+  if (raw === "ready" || raw === "readytopickup" || raw === "ready_to_pickup") return "readyToPickup";
+  if (raw === "confirm") return "confirm";
+  if (raw === "dispatch") return "dispatch";
+  if (raw === "startpreparation" || raw === "start_preparation") return "startPreparation";
+  return "dispatch";
+}
+
+function resolveLifecycleActionFromContext(context = {}) {
+  const explicitAction = normalizeLifecycleAction(context?.action || "");
+  if (explicitAction && context?.action) return explicitAction;
+  const orderType = String(context?.order_type || context?.orderType || "")
+    .trim()
+    .toUpperCase();
+  if (orderType.includes("RETIR") || orderType.includes("TAKEOUT") || orderType.includes("PICKUP")) {
+    return "readyToPickup";
+  }
+  return "dispatch";
+}
+
+function lifecycleActionPaths(action = "dispatch") {
+  const safeAction = normalizeLifecycleAction(action);
+  return [
+    `/order/v1.0/orders/{orderId}/${safeAction}`,
+    `/orders/{orderId}/${safeAction}`
+  ];
+}
+
+function lifecycleActionPayload(action = "dispatch", context = {}) {
+  const safeAction = normalizeLifecycleAction(action);
+  if (safeAction === "dispatch") {
+    return compactObject({
+      source: "PDV_GASTROCODE",
+      reason: "AUTO_ASSIGN_MOTOBOY",
+      motoboy: String(context?.motoboy || "").trim()
+    });
+  }
+  return {};
+}
+
+async function requestOrderLifecycleAction(orderId, action = "dispatch", context = {}) {
+  const cfg = readConfig();
+  const safeAction = normalizeLifecycleAction(action);
+  if (!cfg.enabled) {
+    return {
+      attempted: false,
+      ok: false,
+      provider: "ifood",
+      order_id: String(orderId || "").trim(),
+      action: safeAction,
+      message: "Integracao iFood desativada."
+    };
+  }
+
+  const orderIdText = String(orderId || "").trim();
+  if (!orderIdText) {
+    return {
+      attempted: false,
+      ok: false,
+      provider: "ifood",
+      order_id: "",
+      action: safeAction,
+      message: "Pedido sem ID externo para acao no iFood."
+    };
+  }
+
+  const token = await resolveAccessToken();
+  const headers = {
+    ...buildAuthHeaders(cfg, token),
+    "content-type": "application/json"
+  };
+  const bodyPayload = lifecycleActionPayload(safeAction, context);
+  const bodyJson = JSON.stringify(bodyPayload || {});
+
+  let lastError = null;
+  for (const path of lifecycleActionPaths(safeAction)) {
+    const url = resolveUrl(cfg.base_url, path, { orderId: orderIdText });
+    try {
+      await httpRequestJson(url, {
+        method: "POST",
+        headers,
+        body: bodyJson,
+        timeoutMs: 20000
+      });
+      return {
+        attempted: true,
+        ok: true,
+        provider: "ifood",
+        order_id: orderIdText,
+        action: safeAction,
+        endpoint: path,
+        message: `Acao ${safeAction} enviada ao iFood.`
+      };
+    } catch (error) {
+      lastError = error;
+      const statusCode = Number(error?.statusCode || 0);
+      if (isLikelyAlreadyLifecycleActionError(error)) {
+        return {
+          attempted: true,
+          ok: true,
+          already_applied: true,
+          provider: "ifood",
+          order_id: orderIdText,
+          action: safeAction,
+          endpoint: path,
+          message: `Pedido ja estava com a acao ${safeAction} aplicada no iFood.`
+        };
+      }
+      if (statusCode === 404 || statusCode === 405) continue;
+      break;
+    }
+  }
+
+  return {
+    attempted: true,
+    ok: false,
+    provider: "ifood",
+    order_id: orderIdText,
+    action: safeAction,
+    message: `Falha na acao ${safeAction} do iFood: ${String(lastError?.message || "endpoint indisponivel")}`
+  };
+}
+
+async function autoDispatchOrder(orderId, context = {}) {
+  const action = resolveLifecycleActionFromContext(context || {});
+  const result = await requestOrderLifecycleAction(orderId, action, context || {});
+  if (result?.ok) {
+    if (action === "readyToPickup") {
+      return {
+        ...result,
+        message: result?.already_applied
+          ? "Pedido ja estava pronto para retirada no iFood."
+          : "Pedido marcado como pronto para retirada no iFood."
+      };
+    }
+    return {
+      ...result,
+      message: result?.already_applied
+        ? "Pedido ja estava despachado no iFood."
+        : "Pedido despachado automaticamente no iFood."
+    };
+  }
+  return result;
+}
+
+async function confirmOrder(orderId, context = {}) {
+  const result = await requestOrderLifecycleAction(orderId, "confirm", context || {});
+  if (result?.ok) {
+    return {
+      ...result,
+      message: result?.already_applied
+        ? "Pedido ja estava confirmado no iFood."
+        : "Pedido confirmado no iFood."
+    };
+  }
+  return result;
+}
+
+async function listManualCancellationOptions(orderId = "") {
+  const cfg = readConfig();
+  const fallbackItems = defaultCancellationOptions();
+  const orderIdText = String(orderId || "").trim();
+
+  if (!cfg.enabled) {
+    return {
+      provider: "ifood",
+      source: "fallback",
+      items: fallbackItems,
+      warning: "Integracao iFood desativada.",
+      codes_safe_for_ifood: false
+    };
+  }
+
+  let token = "";
+  try {
+    token = await resolveAccessToken();
+  } catch (error) {
+    return {
+      provider: "ifood",
+      source: "fallback",
+      items: fallbackItems,
+      warning: `Falha ao autenticar no iFood: ${String(error?.message || "token indisponivel")}`,
+      codes_safe_for_ifood: false
+    };
+  }
+
+  if (!orderIdText) {
+    return {
+      provider: "ifood",
+      source: "fallback",
+      items: fallbackItems,
+      warning: "Pedido sem ID externo para consultar codigos de cancelamento no iFood.",
+      codes_safe_for_ifood: false
+    };
+  }
+
+  const headers = buildAuthHeaders(cfg, token);
+  const pathCandidates = [
+    "/order/v1.0/orders/{orderId}/cancellationReasons",
+    "/order/v1.0/orders/{orderId}/cancellation-reasons",
+    "/orders/{orderId}/cancellationReasons",
+    "/orders/{orderId}/cancellation-reasons"
+  ];
+
+  let lastError = null;
+  for (const path of pathCandidates) {
+    const url = resolveUrl(cfg.base_url, path, { orderId: orderIdText });
+    try {
+      const response = await httpRequestJson(url, {
+        method: "GET",
+        headers,
+        timeoutMs: 20000
+      });
+      if (Number(response?.status || 0) === 204) {
+        return {
+          provider: "ifood",
+          source: "ifood_api",
+          endpoint: path,
+          items: [],
+          warning: "Pedido sem motivos disponiveis para cancelamento neste momento.",
+          codes_safe_for_ifood: true
+        };
+      }
+      const items = normalizeCancellationOptionsPayload(response?.data).filter(
+        (item) => !isGeneratedCancellationCode(item?.code)
+      );
+      if (items.length > 0) {
+        return {
+          provider: "ifood",
+          source: "ifood_api",
+          endpoint: path,
+          items,
+          codes_safe_for_ifood: true
+        };
+      }
+    } catch (error) {
+      lastError = error;
+      const code = Number(error?.statusCode || 0);
+      if (code === 404 || code === 405) continue;
+      break;
+    }
+  }
+
+  return {
+    provider: "ifood",
+    source: "fallback",
+    items: fallbackItems,
+    warning: lastError ? String(lastError.message || "Nao foi possivel listar motivos no iFood.") : "",
+    codes_safe_for_ifood: false
+  };
+}
+
+function dedupeCancelPayloadVariants(variants = []) {
+  const seen = new Set();
+  const output = [];
+  for (const item of Array.isArray(variants) ? variants : []) {
+    if (!item || typeof item !== "object") continue;
+    const mode = String(item.mode || "default").trim() || "default";
+    const payload = item.payload && typeof item.payload === "object" ? item.payload : {};
+    const signature = `${mode}:${JSON.stringify(payload)}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    output.push({ mode, payload });
+  }
+  return output;
+}
+
+function buildCancelPayloadVariants(context = {}) {
+  const reasonCode = String(context?.reasonCode || "").trim().slice(0, 180);
+  const reasonLabel = String(context?.reasonLabel || reasonCode || "").trim().slice(0, 180);
+  const subreasonCode = String(context?.subreasonCode || "").trim().slice(0, 120);
+  const description = String(
+    context?.description || reasonLabel || reasonCode || "Cancelamento solicitado no sistema"
+  )
+    .trim()
+    .slice(0, 240);
+
+  const cancellationCodeNumberRaw = Number(context?.cancellationCodeValue);
+  const cancellationCodeNumber =
+    Number.isFinite(cancellationCodeNumberRaw) && cancellationCodeNumberRaw > 0
+      ? Math.round(cancellationCodeNumberRaw)
+      : null;
+
+  const variants = [
+    {
+      mode: "request_cancellation_code_string",
+      payload: compactObject({
+        cancellationCode: reasonCode || undefined,
+        subCancellationCode: subreasonCode || undefined,
+        description
+      })
+    }
+  ];
+
+  if (cancellationCodeNumber) {
+    variants.push({
+      mode: "request_cancellation_code_number",
+      payload: compactObject({
+        cancellationCode: cancellationCodeNumber,
+        subCancellationCode: subreasonCode || undefined,
+        description
+      })
+    });
+  }
+
+  variants.push(
+    {
+      mode: "request_reason_code_contract",
+      payload: compactObject({
+        reasonCode: reasonCode || undefined,
+        subReasonCode: subreasonCode || undefined,
+        description
+      })
+    },
+    {
+      mode: "request_reason_only_contract",
+      payload: compactObject({
+        reason: reasonLabel || reasonCode || undefined,
+        description
+      })
+    }
+  );
+
+  return dedupeCancelPayloadVariants(variants);
+}
+
+function shouldRetryCancelOnAnotherContract(error) {
+  const statusCode = Number(error?.statusCode || 0);
+  if (statusCode === 401 || statusCode === 403) return false;
+  if (statusCode === 404 || statusCode === 405) return true;
+  if (statusCode === 400 || statusCode === 406 || statusCode === 409 || statusCode === 412 || statusCode === 415 || statusCode === 422) {
+    return true;
+  }
+  if (statusCode >= 500 && statusCode <= 599) return true;
+  const message = String(error?.message || "").toLowerCase();
+  if (
+    message.includes("invalid model") ||
+    message.includes("unsupported cancellationcode") ||
+    message.includes("no route matched") ||
+    message.includes("validation") ||
+    message.includes("invalidparameter")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function manualCancelOrder(orderId, context = {}) {
+  const cfg = readConfig();
+  if (!cfg.enabled) {
+    return {
+      attempted: false,
+      ok: false,
+      provider: "ifood",
+      order_id: String(orderId || "").trim(),
+      message: "Integracao iFood desativada."
+    };
+  }
+
+  const orderIdText = String(orderId || "").trim();
+  if (!orderIdText) {
+    return {
+      attempted: false,
+      ok: false,
+      provider: "ifood",
+      order_id: "",
+      message: "Pedido sem ID externo para cancelamento."
+    };
+  }
+
+  const token = await resolveAccessToken();
+  const headers = {
+    ...buildAuthHeaders(cfg, token),
+    "content-type": "application/json"
+  };
+
+  const pathCandidates = [
+    "/order/v1.0/orders/{orderId}/requestCancellation",
+    "/order/v1.0/orders/{orderId}/request-cancellation",
+    "/orders/{orderId}/requestCancellation",
+    "/orders/{orderId}/request-cancellation"
+  ];
+
+  let reasonCode = String(
+    context?.reason_code ||
+      context?.reasonCode ||
+      context?.reason ||
+      "CANCELADO_PELO_ESTABELECIMENTO"
+  )
+    .trim()
+    .slice(0, 180);
+  const reasonLabel = String(context?.reason_label || context?.reasonLabel || reasonCode)
+    .trim()
+    .slice(0, 180);
+  const subreasonCode = String(
+    context?.subreason_code || context?.subreasonCode || context?.subReasonCode || ""
+  )
+    .trim()
+    .slice(0, 120);
+  const description = String(
+    context?.description ||
+      context?.observacao ||
+      context?.observation ||
+      context?.note ||
+      reasonLabel
+  )
+    .trim()
+    .slice(0, 240);
+
+  if (isGeneratedCancellationCode(reasonCode)) {
+    try {
+      const options = await listManualCancellationOptions(orderIdText);
+      const items = Array.isArray(options?.items) ? options.items : [];
+      const wantedLabel = normalizeTextKey(reasonLabel || context?.reason || "");
+      const match = items.find((item) => normalizeTextKey(item?.label || "") === wantedLabel);
+      if (match && !isGeneratedCancellationCode(match.code)) {
+        reasonCode = String(match.code || "").trim().slice(0, 180);
+      }
+    } catch {
+      // segue com validacao logo abaixo
+    }
+  }
+
+  if (isGeneratedCancellationCode(reasonCode)) {
+    throw new Error(
+      "Motivo de cancelamento sem codigo valido no iFood. Reabra o cancelamento e selecione um motivo oficial da API."
+    );
+  }
+  const reasonCodeNumber = Number(reasonCode);
+  const cancellationCodeValue =
+    Number.isFinite(reasonCodeNumber) && reasonCodeNumber > 0 ? Math.round(reasonCodeNumber) : null;
+
+  let lastError = null;
+  let lastAttempt = null;
+  let stopByAuthError = false;
+  const methodCandidates = ["POST"];
+  for (const path of pathCandidates) {
+    const url = resolveUrl(cfg.base_url, path, { orderId: orderIdText });
+    const payloadVariants = buildCancelPayloadVariants({
+      reasonCode,
+      reasonLabel,
+      subreasonCode,
+      description,
+      cancellationCodeValue
+    });
+
+    let skipCurrentPath = false;
+    for (const method of methodCandidates) {
+      if (skipCurrentPath || stopByAuthError) break;
+      for (const payloadVariant of payloadVariants) {
+        if (skipCurrentPath || stopByAuthError) break;
+        try {
+          await httpRequestJson(url, {
+            method,
+            headers,
+            body: JSON.stringify(payloadVariant.payload),
+            timeoutMs: 20000
+          });
+          return {
+            attempted: true,
+            ok: true,
+            provider: "ifood",
+            order_id: orderIdText,
+            endpoint: path,
+            method,
+            payload_mode: payloadVariant.mode,
+            message: "Pedido cancelado manualmente no iFood."
+          };
+        } catch (error) {
+          lastError = error;
+          lastAttempt = {
+            path,
+            method,
+            mode: payloadVariant.mode
+          };
+
+          const statusCode = Number(error?.statusCode || 0);
+          if (isLikelyAlreadyCancelledError(error)) {
+            return {
+              attempted: true,
+              ok: true,
+              already_cancelled: true,
+              provider: "ifood",
+              order_id: orderIdText,
+              endpoint: path,
+              method,
+              payload_mode: payloadVariant.mode,
+              message: "Pedido ja estava cancelado no iFood."
+            };
+          }
+          if (statusCode === 401 || statusCode === 403) {
+            stopByAuthError = true;
+            break;
+          }
+          if (statusCode === 404 || statusCode === 405) {
+            skipCurrentPath = true;
+            break;
+          }
+          if (!shouldRetryCancelOnAnotherContract(error)) {
+            break;
+          }
+        }
+      }
+    }
+    if (stopByAuthError) break;
+  }
+
+  const failedAttemptInfo = lastAttempt
+    ? ` (endpoint: ${lastAttempt.path}, metodo: ${lastAttempt.method}, payload: ${lastAttempt.mode})`
+    : "";
+
+  return {
+    attempted: true,
+    ok: false,
+    provider: "ifood",
+    order_id: orderIdText,
+    endpoint: lastAttempt?.path || "",
+    method: lastAttempt?.method || "",
+    payload_mode: lastAttempt?.mode || "",
+    message: `Falha no cancelamento iFood: ${String(lastError?.message || "endpoint indisponivel")}${failedAttemptInfo}`
+  };
 }
 
 async function acknowledgeEvents(eventIds = [], token, config = null) {
@@ -1423,6 +2268,109 @@ function applyEventHintsToPedido(payloadEntrega, event = {}) {
   return next;
 }
 
+function isCancelledStatusValue(statusRaw = "") {
+  const status = String(statusRaw || "")
+    .trim()
+    .toUpperCase();
+  if (!status) return false;
+  return status.includes("CANCEL") || status.includes("REJECT") || status.includes("DENIED") || status.includes("DECLINED");
+}
+
+function isStatusConfirmedOrBeyond(statusRaw = "") {
+  const status = String(statusRaw || "")
+    .trim()
+    .toUpperCase();
+  if (!status) return false;
+  if (status.includes("CONFIRM") || status === "ACCEPTED" || status === "APPROVED") return true;
+  if (
+    status.includes("PREPAR") ||
+    status.includes("DISPATCH") ||
+    status.includes("ROUTE") ||
+    status.includes("ON_THE_WAY") ||
+    status.includes("READY") ||
+    status.includes("CONCLUDED") ||
+    status.includes("COMPLETED") ||
+    status.includes("FINISHED") ||
+    status.includes("DELIVER")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function shouldAutoConfirmFromEvent(order = {}, event = {}) {
+  const status = normalizeOrderStatus(pick(order?.orderStatus, order?.status, order?.state, "RECEIVED"));
+  if (isCancelledStatusValue(status) || isStatusConfirmedOrBeyond(status)) return false;
+  const eventKey = String(event?.fullCode || event?.code || "")
+    .trim()
+    .toUpperCase();
+  if (!eventKey) return true;
+  if (
+    eventKey.includes("CANCEL") ||
+    eventKey.includes("REJECT") ||
+    eventKey.includes("DENIED") ||
+    eventKey.includes("DECLINED")
+  ) {
+    return false;
+  }
+  if (eventKey.includes("CONFIRM")) return false;
+  if (
+    eventKey === "PLC" ||
+    eventKey.includes("PLACED") ||
+    eventKey.includes("CREATED") ||
+    eventKey.includes("RECEIVED")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function applyConfirmationHintsToPedido(payloadEntrega, confirmationResult = {}, context = {}) {
+  if (!payloadEntrega || typeof payloadEntrega !== "object") return payloadEntrega;
+  if (!payloadEntrega.pedido || typeof payloadEntrega.pedido !== "object") return payloadEntrega;
+  if (!confirmationResult?.ok) return payloadEntrega;
+
+  const next = {
+    ...payloadEntrega,
+    pedido: {
+      ...payloadEntrega.pedido
+    }
+  };
+
+  const detalhesRaw = next.pedido.detalhes && typeof next.pedido.detalhes === "object" ? next.pedido.detalhes : {};
+  const confirmationPrev =
+    detalhesRaw.confirmation && typeof detalhesRaw.confirmation === "object" ? detalhesRaw.confirmation : {};
+  const flagsPrev =
+    detalhesRaw.scenario_flags && typeof detalhesRaw.scenario_flags === "object" ? detalhesRaw.scenario_flags : {};
+  const nowIso = safeIso(context?.at || new Date().toISOString());
+  const currentStatus = normalizeOrderStatus(
+    pick(next.pedido.status, detalhesRaw.orderStatus, detalhesRaw.status, "RECEIVED")
+  );
+  const promotedStatus = isStatusConfirmedOrBeyond(currentStatus) ? currentStatus : "CONFIRMED";
+
+  next.pedido.status = promotedStatus;
+  next.pedido.detalhes = {
+    ...detalhesRaw,
+    status: promotedStatus,
+    orderStatus: promotedStatus,
+    confirmation: {
+      ...confirmationPrev,
+      confirmed: true,
+      confirmed_at: nowIso,
+      source: String(context?.source || "PDV_GASTROCODE").trim().slice(0, 80),
+      mode: String(context?.mode || "AUTO").trim().slice(0, 80),
+      endpoint: String(confirmationResult?.endpoint || "").trim().slice(0, 120),
+      already_confirmed: Boolean(confirmationResult?.already_applied)
+    },
+    scenario_flags: {
+      ...flagsPrev,
+      pedido_confirmado: true
+    }
+  };
+
+  return next;
+}
+
 async function processNormalizedEvent(event, token, config = null) {
   const cfg = config || readConfig();
   if (!event.orderId) {
@@ -1458,10 +2406,31 @@ async function processNormalizedEvent(event, token, config = null) {
   }
 
   try {
-    const payloadEntrega = applyEventHintsToPedido(
+    let confirmationResult = null;
+    if (shouldAutoConfirmFromEvent(orderDetails, event)) {
+      confirmationResult = await confirmOrder(event.orderId, {
+        mode: "AUTO_EVENT",
+        source: "PDV_GASTROCODE"
+      });
+      if (confirmationResult?.attempted && !confirmationResult?.ok) {
+        console.warn(
+          `[ifood-hmg] confirmacao automatica falhou para pedido ${String(event.orderId || "")}: ${String(
+            confirmationResult?.message || "erro desconhecido"
+          )}`
+        );
+      }
+    }
+
+    let payloadEntrega = applyEventHintsToPedido(
       normalizeOrderToEntrega(orderDetails, event.orderId, cfg),
       event
     );
+    if (confirmationResult?.ok) {
+      payloadEntrega = applyConfirmationHintsToPedido(payloadEntrega, confirmationResult, {
+        mode: "AUTO_EVENT",
+        source: "PDV_GASTROCODE"
+      });
+    }
     const upsertResult = EntregaModel.upsertPedidosIntegracao({
       pedidos: [payloadEntrega.pedido]
     });
@@ -1504,7 +2473,29 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right);
 }
 
-async function syncNow(options = {}) {
+async function asyncMapLimit(items = [], limit = 1, mapper = async () => null) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length < 1) return [];
+
+  const maxWorkers = toInt(limit, 1, 1, 8);
+  const workersCount = Math.min(maxWorkers, list.length);
+  const results = new Array(list.length);
+  let cursor = 0;
+
+  const runWorker = async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= list.length) break;
+      results[index] = await mapper(list[index], index);
+    }
+  };
+
+  await Promise.all(Array.from({ length: workersCount }, () => runWorker()));
+  return results;
+}
+
+async function syncNowCore(options = {}) {
   const config = readConfig();
   if (!config.enabled) {
     throw new Error("Modo homologacao iFood desativado.");
@@ -1598,17 +2589,36 @@ async function syncNow(options = {}) {
     uniqueEvents.push(event);
   }
 
+  const syncConcurrency = toInt(
+    options?.concurrency ?? process.env.IFOOD_SYNC_CONCURRENCY ?? 4,
+    4,
+    1,
+    8
+  );
+  const processResults = await asyncMapLimit(uniqueEvents, syncConcurrency, async (event) => {
+    try {
+      const result = await processNormalizedEvent(event, token, config);
+      return {
+        processed: 1,
+        imported: Number(result?.imported ? 1 : 0),
+        failed: 0
+      };
+    } catch {
+      return {
+        processed: 0,
+        imported: 0,
+        failed: 1
+      };
+    }
+  });
+
   let processed = 0;
   let imported = 0;
   let failed = 0;
-  for (const event of uniqueEvents) {
-    try {
-      const result = await processNormalizedEvent(event, token, config);
-      processed += 1;
-      imported += Number(result?.imported ? 1 : 0);
-    } catch {
-      failed += 1;
-    }
+  for (const row of processResults) {
+    processed += Number(row?.processed || 0);
+    imported += Number(row?.imported || 0);
+    failed += Number(row?.failed || 0);
   }
 
   let ackedEvents = 0;
@@ -1654,6 +2664,79 @@ async function syncNow(options = {}) {
     failed_events: failed,
     message
   };
+}
+
+function resultadoSyncIfoodEmAndamento() {
+  const message = "iFood homologacao: sincronizacao ja esta em andamento.";
+  return {
+    provider: "ifood",
+    mode: "homologacao",
+    started: false,
+    running: true,
+    imported: 0,
+    received_events: 0,
+    processed_events: 0,
+    acked_events: 0,
+    duplicated_events: 0,
+    failed_events: 0,
+    message
+  };
+}
+
+function resultadoSyncIfoodIniciada() {
+  const message = "iFood homologacao: sincronizacao iniciada em segundo plano.";
+  return {
+    provider: "ifood",
+    mode: "homologacao",
+    started: true,
+    running: true,
+    imported: 0,
+    received_events: 0,
+    processed_events: 0,
+    acked_events: 0,
+    duplicated_events: 0,
+    failed_events: 0,
+    message
+  };
+}
+
+async function syncNow(options = {}) {
+  const config = readConfig();
+  if (!config.enabled) {
+    throw new Error("Modo homologacao iFood desativado.");
+  }
+
+  if (ifoodSyncRunning) {
+    return resultadoSyncIfoodEmAndamento();
+  }
+
+  if (options.background) {
+    ifoodSyncRunning = true;
+    saveLastSync("iFood homologacao: sincronizacao iniciada em segundo plano.");
+    setImmediate(() => {
+      void (async () => {
+        try {
+          await syncNowCore(options);
+        } catch (error) {
+          const message = `iFood homologacao: falha na sincronizacao em segundo plano (${String(
+            error?.message || "erro"
+          )}).`;
+          saveLastSync(message);
+          console.error(`[ifood-hmg] ${message}`);
+        } finally {
+          ifoodSyncRunning = false;
+        }
+      })();
+    });
+    return resultadoSyncIfoodIniciada();
+  }
+
+  ifoodSyncRunning = true;
+  try {
+    return await syncNowCore(options);
+  } finally {
+    ifoodSyncRunning = false;
+  }
 }
 
 async function processWebhook(payload = {}, options = {}) {
@@ -2008,6 +3091,10 @@ module.exports = {
   getStatus,
   listRecentEvents,
   refreshAccessToken,
+  confirmOrder,
+  autoDispatchOrder,
+  listManualCancellationOptions,
+  manualCancelOrder,
   syncNow,
   processWebhook,
   integrationExtrasForResponse,

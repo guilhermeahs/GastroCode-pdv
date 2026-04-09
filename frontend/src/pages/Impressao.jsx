@@ -143,6 +143,7 @@ export default function Impressao() {
   const inputLogoRef = useRef(null);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [confirmLimparChecklistOpen, setConfirmLimparChecklistOpen] = useState(false);
+  const [modoAvancado, setModoAvancado] = useState(false);
 
   const pedidoTeste = useMemo(
     () => ({
@@ -318,6 +319,20 @@ export default function Impressao() {
     setConfirmLimparChecklistOpen(false);
   }
 
+  function aplicarPadraoRecomendado() {
+    atualizarConfigImpressao({
+      metodo_impressao: "NAVEGADOR",
+      largura_papel_mm: 80,
+      exibir_cabecalho: true,
+      mostrar_cliente: true,
+      mostrar_data_hora: true,
+      mostrar_forma_pagamento: true,
+      auto_imprimir_pagamento: true,
+      auto_imprimir_fechamento_caixa: false,
+      mensagem_rodape: "Obrigado pela preferencia."
+    });
+  }
+
   if (!hasPermission("APP_IMPRESSAO")) {
     return <p>Sem permissao para acessar impressao.</p>;
   }
@@ -329,68 +344,108 @@ export default function Impressao() {
       <div style={cardStyle}>
         <h3 style={{ marginTop: 0 }}>Padrao de comprovante</h3>
 
-        <div style={gridStyle}>
-          <div>
-            <label style={labelStyle}>Metodo de impressao</label>
-            <SelectField
-              value={configImpressao.metodo_impressao}
-              onChange={(value) => atualizarConfigImpressao({ metodo_impressao: value })}
-              options={METODO_OPTIONS}
-              buttonStyle={inputLikeSelectStyle}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Largura do papel</label>
-            <SelectField
-              value={Number(configImpressao.largura_papel_mm)}
-              onChange={(value) => atualizarConfigImpressao({ largura_papel_mm: Number(value) })}
-              options={LARGURA_OPTIONS}
-              buttonStyle={inputLikeSelectStyle}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Impressora (modo direto)</label>
-            <div style={printerSelectRowStyle}>
-              <SelectField
-                value={configImpressao.impressora_nome}
-                onChange={(value) => atualizarConfigImpressao({ impressora_nome: value })}
-                options={impressoraOptions}
-                placeholder={carregandoImpressoras ? "Carregando..." : "Selecionar impressora"}
-                buttonStyle={inputLikeSelectStyle}
-                disabled={carregandoImpressoras || impressoraOptions.length === 0}
-              />
-
-              <button
-                type="button"
-                style={refreshButtonStyle}
-                onClick={async () => {
-                  setCarregandoImpressoras(true);
-                  setErroImpressoras("");
-                  try {
-                    const resposta = await api.getImpressoras(role);
-                    const lista = Array.isArray(resposta?.impressoras) ? resposta.impressoras : [];
-                    setImpressoras(lista);
-                  } catch (error) {
-                    setErroImpressoras(error.message || "Nao foi possivel carregar impressoras.");
-                  } finally {
-                    setCarregandoImpressoras(false);
-                  }
-                }}
-                disabled={carregandoImpressoras}
-              >
-                {carregandoImpressoras ? "..." : "Atualizar"}
-              </button>
+        <div style={quickCardStyle}>
+          <div style={quickHeaderStyle}>
+            <div>
+              <strong style={{ fontSize: 18 }}>Configuracao rapida (recomendada)</strong>
+              <div style={smallHelperStyle}>
+                Ideal para o usuario final: escolha impressora, largura e teste em 1 clique.
+              </div>
             </div>
-            {erroImpressoras && <div style={warningStyle}>{erroImpressoras}</div>}
-            {!erroImpressoras && impressoraOptions.length === 0 && (
-              <div style={warningStyle}>Nenhuma impressora encontrada no Windows.</div>
-            )}
+            <button type="button" style={secondaryButtonStyle} onClick={() => setModoAvancado((v) => !v)}>
+              {modoAvancado ? "Ocultar avancado" : "Abrir avancado"}
+            </button>
+          </div>
+
+          <div style={gridStyle}>
+            <div>
+              <label style={labelStyle}>Metodo de impressao</label>
+              <SelectField
+                value={configImpressao.metodo_impressao}
+                onChange={(value) => atualizarConfigImpressao({ metodo_impressao: value })}
+                options={METODO_OPTIONS}
+                buttonStyle={inputLikeSelectStyle}
+              />
+            </div>
+
+            <div>
+              <label style={labelStyle}>Largura do papel</label>
+              <SelectField
+                value={Number(configImpressao.largura_papel_mm)}
+                onChange={(value) => atualizarConfigImpressao({ largura_papel_mm: Number(value) })}
+                options={LARGURA_OPTIONS}
+                buttonStyle={inputLikeSelectStyle}
+              />
+            </div>
+
+            <div>
+              <label style={labelStyle}>Impressora (modo direto)</label>
+              <div style={printerSelectRowStyle}>
+                <SelectField
+                  value={configImpressao.impressora_nome}
+                  onChange={(value) => atualizarConfigImpressao({ impressora_nome: value })}
+                  options={impressoraOptions}
+                  placeholder={carregandoImpressoras ? "Carregando..." : "Selecionar impressora"}
+                  buttonStyle={inputLikeSelectStyle}
+                  disabled={carregandoImpressoras || impressoraOptions.length === 0}
+                />
+
+                <button
+                  type="button"
+                  style={refreshButtonStyle}
+                  onClick={async () => {
+                    setCarregandoImpressoras(true);
+                    setErroImpressoras("");
+                    try {
+                      const resposta = await api.getImpressoras(role);
+                      const lista = Array.isArray(resposta?.impressoras) ? resposta.impressoras : [];
+                      setImpressoras(lista);
+                    } catch (error) {
+                      setErroImpressoras(error.message || "Nao foi possivel carregar impressoras.");
+                    } finally {
+                      setCarregandoImpressoras(false);
+                    }
+                  }}
+                  disabled={carregandoImpressoras}
+                >
+                  {carregandoImpressoras ? "..." : "Atualizar"}
+                </button>
+              </div>
+              {erroImpressoras && <div style={warningStyle}>{erroImpressoras}</div>}
+              {!erroImpressoras && impressoraOptions.length === 0 && (
+                <div style={warningStyle}>Nenhuma impressora encontrada no Windows.</div>
+              )}
+            </div>
+          </div>
+
+          <div style={quickActionsStyle}>
+            <SwitchRow
+              label="Imprimir automatico no pagamento"
+              checked={configImpressao.auto_imprimir_pagamento}
+              onToggle={() => alternar("auto_imprimir_pagamento")}
+            />
+            <button type="button" onClick={imprimirTestePreConta} style={secondaryButtonStyle}>
+              Teste pre-conta
+            </button>
+            <button type="button" onClick={imprimirTestePagamento} style={secondaryButtonStyle}>
+              Teste pagamento
+            </button>
+            <button type="button" onClick={aplicarPadraoRecomendado} style={secondaryButtonStyle}>
+              Aplicar padrao recomendado
+            </button>
           </div>
         </div>
 
-        <div style={logoCardStyle}>
+        {!modoAvancado && (
+          <div style={infoCompactStyle}>
+            Modo simples ativo. Os detalhes tecnicos de logo, checklist e ajustes finos ficam em
+            <strong> Abrir avancado</strong>.
+          </div>
+        )}
+
+        {modoAvancado && (
+          <>
+            <div style={logoCardStyle}>
           <div style={logoHeaderStyle}>
             <div>
               <label style={labelStyle}>Logo no comprovante</label>
@@ -475,73 +530,69 @@ export default function Impressao() {
               style={{ width: "100%" }}
             />
           </div>
-        </div>
+            </div>
 
-        <div style={warningStyle}>
-          Dica: no modo navegador, a escolha da impressora e "Cabecalhos e rodapes" ficam no dialogo de impressao.
-        </div>
-        {configImpressao.metodo_impressao === "DIRETA" && configImpressao.mostrar_logo && (
-          <div style={warningStyle}>
-            Com logo ativa, a impressao abre no navegador para garantir que a imagem saia no comprovante.
-          </div>
+            <div style={warningStyle}>
+              Dica: no modo navegador, a escolha da impressora e "Cabecalhos e rodapes" ficam no dialogo de impressao.
+            </div>
+            {configImpressao.metodo_impressao === "DIRETA" && configImpressao.mostrar_logo && (
+              <div style={warningStyle}>
+                Com logo ativa, a impressao abre no navegador para garantir que a imagem saia no comprovante.
+              </div>
+            )}
+
+            <div style={switchGridStyle}>
+              <SwitchRow
+                label="Exibir cabecalho"
+                checked={configImpressao.exibir_cabecalho}
+                onToggle={() => alternar("exibir_cabecalho")}
+              />
+              <SwitchRow
+                label="Mostrar cliente"
+                checked={configImpressao.mostrar_cliente}
+                onToggle={() => alternar("mostrar_cliente")}
+              />
+              <SwitchRow
+                label="Mostrar data/hora"
+                checked={configImpressao.mostrar_data_hora}
+                onToggle={() => alternar("mostrar_data_hora")}
+              />
+              <SwitchRow
+                label="Mostrar forma de pagamento"
+                checked={configImpressao.mostrar_forma_pagamento}
+                onToggle={() => alternar("mostrar_forma_pagamento")}
+              />
+              <SwitchRow
+                label="Imprimir automatico no fechamento de caixa"
+                checked={configImpressao.auto_imprimir_fechamento_caixa}
+                onToggle={() => alternar("auto_imprimir_fechamento_caixa")}
+              />
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <label style={labelStyle}>Mensagem no rodape</label>
+              <textarea
+                value={configImpressao.mensagem_rodape}
+                onChange={(e) => atualizarConfigImpressao({ mensagem_rodape: e.target.value })}
+                style={textareaStyle}
+                placeholder="Ex.: Obrigado pela preferencia."
+              />
+            </div>
+
+            <div style={actionsStyle}>
+              <button type="button" onClick={imprimirTesteFechamentoCaixa} style={secondaryButtonStyle}>
+                Teste fechamento caixa
+              </button>
+              <button type="button" onClick={restaurarPadrao} style={dangerButtonStyle}>
+                Restaurar padrao
+              </button>
+            </div>
+          </>
         )}
-
-        <div style={switchGridStyle}>
-          <SwitchRow label="Exibir cabecalho" checked={configImpressao.exibir_cabecalho} onToggle={() => alternar("exibir_cabecalho")} />
-          <SwitchRow
-            label="Mostrar cliente"
-            checked={configImpressao.mostrar_cliente}
-            onToggle={() => alternar("mostrar_cliente")}
-          />
-          <SwitchRow
-            label="Mostrar data/hora"
-            checked={configImpressao.mostrar_data_hora}
-            onToggle={() => alternar("mostrar_data_hora")}
-          />
-          <SwitchRow
-            label="Mostrar forma de pagamento"
-            checked={configImpressao.mostrar_forma_pagamento}
-            onToggle={() => alternar("mostrar_forma_pagamento")}
-          />
-          <SwitchRow
-            label="Imprimir automatico no pagamento"
-            checked={configImpressao.auto_imprimir_pagamento}
-            onToggle={() => alternar("auto_imprimir_pagamento")}
-          />
-          <SwitchRow
-            label="Imprimir automatico no fechamento de caixa"
-            checked={configImpressao.auto_imprimir_fechamento_caixa}
-            onToggle={() => alternar("auto_imprimir_fechamento_caixa")}
-          />
-        </div>
-
-        <div style={{ marginTop: 10 }}>
-          <label style={labelStyle}>Mensagem no rodape</label>
-          <textarea
-            value={configImpressao.mensagem_rodape}
-            onChange={(e) => atualizarConfigImpressao({ mensagem_rodape: e.target.value })}
-            style={textareaStyle}
-            placeholder="Ex.: Obrigado pela preferencia."
-          />
-        </div>
-
-        <div style={actionsStyle}>
-          <button type="button" onClick={imprimirTestePreConta} style={secondaryButtonStyle}>
-            Teste pre-conta
-          </button>
-          <button type="button" onClick={imprimirTestePagamento} style={secondaryButtonStyle}>
-            Teste pagamento
-          </button>
-          <button type="button" onClick={imprimirTesteFechamentoCaixa} style={secondaryButtonStyle}>
-            Teste fechamento caixa
-          </button>
-          <button type="button" onClick={restaurarPadrao} style={dangerButtonStyle}>
-            Restaurar padrao
-          </button>
-        </div>
       </div>
 
-      <div style={cardStyle}>
+      {modoAvancado && (
+        <div style={cardStyle}>
         <h3 style={{ marginTop: 0 }}>Preview rapido</h3>
         <div style={previewStyle}>
           {configImpressao.mostrar_logo && configImpressao.logo_data_url && (
@@ -575,9 +626,11 @@ export default function Impressao() {
             </>
           )}
         </div>
-      </div>
+        </div>
+      )}
 
-      <div style={cardStyle}>
+      {modoAvancado && (
+        <div style={cardStyle}>
         <div style={checklistHeaderStyle}>
           <div>
             <h3 style={{ margin: 0 }}>Checklist de homologacao termica</h3>
@@ -622,7 +675,8 @@ export default function Impressao() {
             Limpar checklist
           </button>
         </div>
-      </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmResetOpen}
@@ -786,10 +840,43 @@ const warningStyle = {
   fontSize: 13
 };
 
+const infoCompactStyle = {
+  marginTop: 12,
+  border: "1px solid #33406f",
+  borderRadius: 10,
+  padding: "10px 12px",
+  background: "#101730",
+  color: "#b7c0df",
+  fontSize: 13
+};
+
 const smallHelperStyle = {
   marginTop: 4,
   color: "#aeb6d3",
   fontSize: 12
+};
+
+const quickCardStyle = {
+  border: "1px solid #33406f",
+  borderRadius: 12,
+  background: "#101730",
+  padding: 12
+};
+
+const quickHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 10,
+  alignItems: "center",
+  flexWrap: "wrap",
+  marginBottom: 10
+};
+
+const quickActionsStyle = {
+  marginTop: 12,
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))"
 };
 
 const logoCardStyle = {

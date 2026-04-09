@@ -955,6 +955,12 @@ export default function Configuracoes() {
 
           <div style={configStackStyle}>
             <SwitchRow
+              label="Exigir PIN do garcom ao enviar mesa para fechamento"
+              checked={configuracoes.exigir_pin_fechamento_conta}
+              onToggle={() => toggle("exigir_pin_fechamento_conta")}
+            />
+
+            <SwitchRow
               label="Cobrar taxa de servico por padrao"
               checked={configuracoes.cobrar_taxa_servico_padrao}
               onToggle={() => toggle("cobrar_taxa_servico_padrao")}

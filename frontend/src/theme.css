@@ -4,13 +4,19 @@
   --font-body: "Nunito Sans", "DejaVu Sans", "Verdana", sans-serif;
   --font-heading: "Sora", "Trebuchet MS", sans-serif;
   --font-mono: "JetBrains Mono", "Consolas", monospace;
-  --scrollbar-track: #0f1430;
-  --scrollbar-thumb: linear-gradient(180deg, #376bf5 0%, #2146ba 100%);
-  --scrollbar-thumb-border: #7ba0ff;
+  --scrollbar-track: #0c1128;
+  --scrollbar-track-border: rgba(110, 140, 255, 0.14);
+  --scrollbar-thumb: linear-gradient(180deg, #6f97ff 0%, #4b79ff 42%, #2349c2 100%);
+  --scrollbar-thumb-hover: linear-gradient(180deg, #8fb0ff 0%, #5e8bff 42%, #2c56d4 100%);
+  --scrollbar-thumb-active: linear-gradient(180deg, #557ff6 0%, #3f6df0 48%, #1f3da0 100%);
+  --scrollbar-thumb-solid: #4f7dff;
+  --scrollbar-thumb-border: rgba(8, 12, 24, 0.92);
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb-solid) var(--scrollbar-track);
+  scrollbar-width: thin;
 }
 
 html,
@@ -22,7 +28,7 @@ body,
 
 html {
   font-size: clamp(14px, 0.75vw + 10px, 17px);
-  scrollbar-color: #376bf5 #0f1430;
+  scrollbar-color: var(--scrollbar-thumb-solid) var(--scrollbar-track);
   scrollbar-width: thin;
 }
 
@@ -54,21 +60,45 @@ textarea {
 }
 
 *::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 *::-webkit-scrollbar-track {
   background: var(--scrollbar-track);
   border-radius: 999px;
+  border: 1px solid var(--scrollbar-track-border);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 10px rgba(0, 0, 0, 0.3);
 }
 
 *::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border-radius: 999px;
-  border: 2px solid var(--scrollbar-thumb-border);
+  border: 3px solid var(--scrollbar-thumb-border);
+  background-clip: padding-box;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 0 0 1px rgba(98, 135, 255, 0.16);
+  min-height: 44px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  filter: brightness(1.08);
+  background: var(--scrollbar-thumb-hover);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 0 1px rgba(124, 160, 255, 0.26),
+    0 0 10px rgba(77, 123, 255, 0.18);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 1px rgba(124, 160, 255, 0.2);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }

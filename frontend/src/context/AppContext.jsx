@@ -20,6 +20,7 @@ const DEFAULT_CONFIGURACOES = {
   estabelecimento_cidade_uf: "",
   exigir_nome_cliente: false,
   solicitar_nome_garcom_fechamento: false,
+  exigir_pin_fechamento_conta: true,
   teclado_touch_automatico: true,
   pessoas_padrao_conta: 1,
   cobrar_taxa_servico_padrao: true,
@@ -155,6 +156,7 @@ function normalizarConfiguracoes(valor) {
     estabelecimento_cidade_uf: String(base.estabelecimento_cidade_uf || "").slice(0, 90),
     exigir_nome_cliente: Boolean(base.exigir_nome_cliente),
     solicitar_nome_garcom_fechamento: Boolean(base.solicitar_nome_garcom_fechamento),
+    exigir_pin_fechamento_conta: base.exigir_pin_fechamento_conta !== false,
     teclado_touch_automatico: base.teclado_touch_automatico !== false,
     pessoas_padrao_conta: Math.max(1, Math.min(20, Number(base.pessoas_padrao_conta || 1) || 1)),
     cobrar_taxa_servico_padrao: base.cobrar_taxa_servico_padrao !== false,
@@ -926,6 +928,15 @@ export function AppProvider({ children }) {
   }
 
   async function adicionarItem(mesaId, produtoId, quantidade) {
+    const quantidadeNumero = Math.max(1, Number(quantidade || 1) || 1);
+    const produtoSelecionado = (produtos || []).find(
+      (item) => Number(item?.id) === Number(produtoId)
+    );
+    const nomeProduto = String(produtoSelecionado?.nome || "").trim();
+    const mensagemSucesso = nomeProduto
+      ? `${nomeProduto} x${quantidadeNumero} adicionado na conta.`
+      : "Item adicionado na conta.";
+
     return executarAcao(
       () =>
         api.addItem(
@@ -938,9 +949,8 @@ export function AppProvider({ children }) {
         ),
       {
         mesaId,
-        successMessage: "Item adicionado.",
-        lowStockMessage: "Atencao: estoque baixo para este produto.",
-        showSuccess: false
+        successMessage: mensagemSucesso,
+        lowStockMessage: "Atencao: estoque baixo para este produto."
       }
     );
   }

@@ -1,6 +1,7 @@
 const db = require("../config/db");
 
 const MOTOBOY_NUMBER_REGEX = /^(?:\d{3}|\d{4}|\d{6})$/;
+const JANELA_DUPLICIDADE_MINUTOS = 20;
 const PEDIDO_SELECT_FIELDS = `
   id,
   motoboy_id,
@@ -49,17 +50,12 @@ const pedidosPendentesStmt = db.prepare(`
   ORDER BY datetime(data_iso) DESC, id DESC
 `);
 
-const pedidosNumerosExistentesStmt = db.prepare(`
-  SELECT numero
-  FROM motoboy_pedidos
-  WHERE motoboy_id = ?
-`);
-
-const pedidoBySourceNumeroStmt = db.prepare(`
+const pedidoBySourceNumeroDiaStmt = db.prepare(`
   SELECT ${PEDIDO_SELECT_FIELDS}
   FROM motoboy_pedidos
   WHERE lower(source) = lower(?)
     AND lower(numero) = lower(?)
+    AND date(datetime(data_iso), 'localtime') = ?
   LIMIT 1
 `);
 
@@ -71,19 +67,23 @@ const pedidoBySourceExternalIdStmt = db.prepare(`
   LIMIT 1
 `);
 
-const pedidoByMotoboyNumeroStmt = db.prepare(`
+const pedidoMaisRecenteByMotoboySourceNumeroStmt = db.prepare(`
   SELECT ${PEDIDO_SELECT_FIELDS}
   FROM motoboy_pedidos
   WHERE motoboy_id = ?
+    AND lower(source) = lower(?)
     AND lower(numero) = lower(?)
+  ORDER BY datetime(data_iso) DESC, id DESC
   LIMIT 1
 `);
 
-const pedidoPendenteByNumeroStmt = db.prepare(`
+const pedidoPendenteBySourceNumeroDiaStmt = db.prepare(`
   SELECT ${PEDIDO_SELECT_FIELDS}
   FROM motoboy_pedidos
   WHERE motoboy_id IS NULL
+    AND lower(source) = lower(?)
     AND lower(numero) = lower(?)
+    AND date(datetime(data_iso), 'localtime') = ?
   ORDER BY id DESC
   LIMIT 1
 `);
@@ -223,6 +223,38 @@ function normalizarStatusPedido(value, fallback = "RECEBIDO") {
   return text.slice(0, 40);
 }
 
+function extrairDiaISO(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text.slice(0, 10);
+  }
+  const parsed = new Date(text || normalizarDataIso(value));
+  if (Number.isNaN(parsed.getTime())) {
+    return normalizarDataIso(value).slice(0, 10);
+  }
+  const yyyy = String(parsed.getFullYear());
+  const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+  const dd = String(parsed.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function diferencaMinutosEntreIso(aIso, bIso) {
+  const a = new Date(String(aIso || ""));
+  const b = new Date(String(bIso || ""));
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return Number.POSITIVE_INFINITY;
+  return Math.abs(a.getTime() - b.getTime()) / 60000;
+}
+
+function mesmoPedidoPorExternalId(aExternalId, bExternalId) {
+  const a = String(aExternalId || "")
+    .trim()
+    .toLowerCase();
+  const b = String(bExternalId || "")
+    .trim()
+    .toLowerCase();
+  return a.length > 0 && b.length > 0 && a === b;
+}
+
 function serializarDetalhesPedido(value) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value === "string") {
@@ -251,6 +283,31 @@ function parseDetalhesPedido(value) {
   } catch {
     return null;
   }
+}
+
+function enriquecerDetalhesIntegracao(value, meta = {}) {
+  const parsed = parseDetalhesPedido(value);
+  let base = parsed && typeof parsed === "object" ? parsed : {};
+
+  if (!parsed && typeof value === "object" && value !== null) {
+    base = value;
+  } else if (!parsed && typeof value === "string" && value.trim()) {
+    base = { raw: value.trim() };
+  }
+
+  const prevMeta =
+    base.integration_meta && typeof base.integration_meta === "object" ? base.integration_meta : {};
+
+  return {
+    ...base,
+    integration_meta: {
+      ...prevMeta,
+      auto_imported: true,
+      source: String(meta.source || prevMeta.source || "").trim().toUpperCase().slice(0, 24),
+      external_id: String(meta.external_id || prevMeta.external_id || "").trim().slice(0, 120),
+      imported_at: normalizarDataIso(meta.imported_at || prevMeta.imported_at || new Date().toISOString())
+    }
+  };
 }
 
 function hydratePedido(row) {
@@ -413,12 +470,6 @@ const EntregaModel = {
       throw new Error("Informe ao menos um pedido para adicionar.");
     }
 
-    const existentesNoMotoboy = new Set(
-      pedidosNumerosExistentesStmt
-        .all(id)
-        .map((item) => String(item.numero || "").trim().toLowerCase())
-    );
-
     const invalidos = [];
     const duplicados = [];
     const adicionados = [];
@@ -428,19 +479,26 @@ const EntregaModel = {
         const numeroRaw = String(item?.numero || "").trim();
         try {
           const numero = normalizarNumeroPedido(numeroRaw);
-          const chave = numero.toLowerCase();
-          if (existentesNoMotoboy.has(chave)) {
-            duplicados.push(numero);
-            continue;
-          }
-
           const source = String(item?.source || classificarOrigem(numero))
             .trim()
             .toUpperCase();
           const payment = normalizarPagamentoEntrega(item?.payment || "ONLINE");
           const dataIso = normalizarDataIso(item?.whenISO || payload.whenISO || "");
+          const dia = extrairDiaISO(dataIso);
+          const conflitoRecente = pedidoMaisRecenteByMotoboySourceNumeroStmt.get(
+            id,
+            source || "DESCONHECIDO",
+            numero
+          );
+          if (conflitoRecente) {
+            const minutos = diferencaMinutosEntreIso(conflitoRecente.data_iso, dataIso);
+            if (minutos <= JANELA_DUPLICIDADE_MINUTOS) {
+              duplicados.push(numero);
+              continue;
+            }
+          }
 
-          const pendente = pedidoPendenteByNumeroStmt.get(numero);
+          const pendente = pedidoPendenteBySourceNumeroDiaStmt.get(source || "DESCONHECIDO", numero, dia);
           if (pendente) {
             updatePedidoByIdStmt.run(
               id,
@@ -466,8 +524,6 @@ const EntregaModel = {
             );
             adicionados.push(hydratePedido(pedidoByIdStmt.get(info.lastInsertRowid)));
           }
-
-          existentesNoMotoboy.add(chave);
         } catch {
           if (numeroRaw) {
             invalidos.push(numeroRaw);
@@ -521,28 +577,41 @@ const EntregaModel = {
             .slice(0, 24);
           const payment = normalizarPagamentoEntrega(item?.payment || "ONLINE");
           const dataIso = normalizarDataIso(item?.whenISO || item?.dataISO || "");
+          const dia = extrairDiaISO(dataIso);
           const externalId = String(
             item?.external_id || item?.externalId || item?.order_id || item?.orderId || ""
           )
             .trim()
             .slice(0, 120);
           const status = normalizarStatusPedido(item?.status || item?.order_status || "RECEBIDO");
-          const detalhesJson = serializarDetalhesPedido(
-            item?.detalhes_json ?? item?.detalhes ?? item?.details ?? item?.payload ?? null
-          );
+          const detalhesInput = item?.detalhes_json ?? item?.detalhes ?? item?.details ?? item?.payload ?? null;
+          const detalhesComMeta = enriquecerDetalhesIntegracao(detalhesInput, {
+            source,
+            external_id: externalId,
+            imported_at: dataIso
+          });
+          const detalhesJson = serializarDetalhesPedido(detalhesComMeta);
 
           const existenteByExternal =
             externalId && source
               ? pedidoBySourceExternalIdStmt.get(source || "DESCONHECIDO", externalId)
               : null;
-          const existente = existenteByExternal || pedidoBySourceNumeroStmt.get(source || "DESCONHECIDO", numero);
+          const existente =
+            existenteByExternal ||
+            pedidoBySourceNumeroDiaStmt.get(source || "DESCONHECIDO", numero, dia);
           if (existente) {
             const motoboyDestino =
               existente.motoboy_id === null || existente.motoboy_id === undefined
                 ? targetMotoboyId
                 : Number(existente.motoboy_id);
 
-            const detalhesFinal = detalhesJson || serializarDetalhesPedido(existente.detalhes_json) || null;
+            const detalhesFinal = detalhesJson || serializarDetalhesPedido(
+              enriquecerDetalhesIntegracao(existente.detalhes_json, {
+                source,
+                external_id: externalId || existente.external_id,
+                imported_at: dataIso
+              })
+            ) || null;
             updatePedidoByIdStmt.run(
               Number.isFinite(motoboyDestino) ? motoboyDestino : null,
               source || "DESCONHECIDO",
@@ -597,9 +666,73 @@ const EntregaModel = {
       throw new Error("Pedido nao encontrado.");
     }
 
-    const conflito = pedidoByMotoboyNumeroStmt.get(motoboy.id, pedido.numero);
+    const source = String(payload?.source || pedido.source || "DESCONHECIDO")
+      .trim()
+      .toUpperCase()
+      .slice(0, 24);
+    const payment = normalizarPagamentoEntrega(payload?.payment || pedido.payment || "ONLINE");
+    const dataIso = normalizarDataIso(payload?.whenISO || payload?.dataISO || pedido.data_iso || "");
+    const externalId = String(
+      payload?.external_id !== undefined ? payload.external_id : pedido.external_id || ""
+    )
+      .trim()
+      .slice(0, 120);
+    const status = normalizarStatusPedido(payload?.status || pedido.status || "RECEBIDO");
+    const detalhesJson = serializarDetalhesPedido(
+      payload?.detalhes ?? payload?.details ?? payload?.detalhes_json ?? pedido.detalhes_json
+    );
+
+    const conflito = pedidoMaisRecenteByMotoboySourceNumeroStmt.get(
+      motoboy.id,
+      source || "DESCONHECIDO",
+      pedido.numero
+    );
     if (conflito && Number(conflito.id) !== Number(pedido.id)) {
-      throw new Error(`Pedido #${pedido.numero} ja existe nesse motoboy.`);
+      const isMesmoPedido = mesmoPedidoPorExternalId(conflito.external_id, pedido.external_id);
+      if (!isMesmoPedido) {
+        const minutos = diferencaMinutosEntreIso(conflito.data_iso, dataIso);
+        if (minutos <= JANELA_DUPLICIDADE_MINUTOS) {
+          throw new Error(
+            `Pedido #${pedido.numero} ja existe nesse motoboy nos ultimos ${JANELA_DUPLICIDADE_MINUTOS} minutos.`
+          );
+        }
+      }
+    }
+
+    updatePedidoByIdStmt.run(
+      Number(motoboy.id),
+      source || "DESCONHECIDO",
+      payment || "ONLINE",
+      externalId || null,
+      status || "RECEBIDO",
+      detalhesJson || null,
+      dataIso,
+      pedido.id
+    );
+    return hydratePedido(pedidoByIdStmt.get(pedido.id));
+  },
+
+  obterPedido(pedidoId) {
+    const id = Number(pedidoId);
+    if (!Number.isFinite(id)) {
+      throw new Error("Pedido invalido.");
+    }
+    const pedido = pedidoByIdStmt.get(id);
+    if (!pedido) {
+      throw new Error("Pedido nao encontrado.");
+    }
+    return hydratePedido(pedido);
+  },
+
+  atualizarPedido(pedidoId, payload = {}) {
+    const id = Number(pedidoId);
+    if (!Number.isFinite(id)) {
+      throw new Error("Pedido invalido.");
+    }
+
+    const pedido = pedidoByIdStmt.get(id);
+    if (!pedido) {
+      throw new Error("Pedido nao encontrado.");
     }
 
     const source = String(payload?.source || pedido.source || "DESCONHECIDO")
@@ -608,18 +741,37 @@ const EntregaModel = {
       .slice(0, 24);
     const payment = normalizarPagamentoEntrega(payload?.payment || pedido.payment || "ONLINE");
     const dataIso = normalizarDataIso(payload?.whenISO || payload?.dataISO || pedido.data_iso || "");
+    const externalId = String(
+      payload?.external_id !== undefined ? payload.external_id : pedido.external_id || ""
+    )
+      .trim()
+      .slice(0, 120);
+    const status = normalizarStatusPedido(payload?.status || pedido.status || "RECEBIDO");
+    const detalhesJson = serializarDetalhesPedido(
+      payload?.detalhes ?? payload?.details ?? payload?.detalhes_json ?? pedido.detalhes_json
+    );
+
+    let motoboyId = pedido.motoboy_id;
+    if (payload?.motoboy_id !== undefined) {
+      if (payload.motoboy_id === null || payload.motoboy_id === "") {
+        motoboyId = null;
+      } else {
+        const parsed = Number(payload.motoboy_id);
+        motoboyId = Number.isFinite(parsed) ? parsed : null;
+      }
+    }
 
     updatePedidoByIdStmt.run(
-      Number(motoboy.id),
+      motoboyId,
       source || "DESCONHECIDO",
       payment || "ONLINE",
-      String(pedido.external_id || "").trim() || null,
-      normalizarStatusPedido(pedido.status || "RECEBIDO"),
-      serializarDetalhesPedido(pedido.detalhes_json) || null,
+      externalId || null,
+      status || "RECEBIDO",
+      detalhesJson || null,
       dataIso,
-      pedido.id
+      id
     );
-    return hydratePedido(pedidoByIdStmt.get(pedido.id));
+    return hydratePedido(pedidoByIdStmt.get(id));
   },
 
   removerPedido(pedidoId) {

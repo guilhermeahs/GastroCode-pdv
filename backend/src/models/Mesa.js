@@ -1,5 +1,7 @@
 ﻿const db = require("../config/db");
 
+const { hashPin, pinValidoFormato } = require("../utils/security");
+
 const mesaByIdStmt = db.prepare("SELECT * FROM mesas WHERE id = ?");
 const mesaByNumeroStmt = db.prepare("SELECT * FROM mesas WHERE numero = ?");
 const maxMesaNumeroStmt = db.prepare("SELECT COALESCE(MAX(numero), 0) AS maximo FROM mesas");
@@ -101,6 +103,14 @@ const totalPedidosPagosByMesaStmt = db.prepare(`
   SELECT COUNT(*) AS total
   FROM pedidos
   WHERE mesa_id = ? AND status = 'PAGO'
+`);
+const garcomAtivoByApelidoStmt = db.prepare(`
+  SELECT id, nome, apelido, pin_salt, pin_hash
+  FROM usuarios
+  WHERE LOWER(apelido) = LOWER(?)
+    AND role = 'GARCOM'
+    AND ativo = 1
+  LIMIT 1
 `);
 const TAXA_COUVERT_MAX = 200;
 const TAXA_SERVICO_PADRAO = 10;
@@ -219,6 +229,51 @@ function normalizarNomeGarcomFechamento(value, fallback = "") {
   return String(bruto || "")
     .trim()
     .slice(0, 60);
+}
+
+function normalizarCodigoGarcomFechamento(value) {
+  return String(value || "")
+    .trim()
+    .slice(0, 60);
+}
+
+function resolverGarcomFechamento(payload = {}, pedido = null) {
+  const codigoGarcom = normalizarCodigoGarcomFechamento(
+    payload.garcom_codigo_fechamento || payload.garcom_apelido_fechamento
+  );
+  const pinGarcom = String(payload.garcom_pin_fechamento || "").trim();
+
+  if (codigoGarcom || pinGarcom) {
+    if (!codigoGarcom) {
+      throw new Error("Informe o codigo do garcom para fechar a mesa.");
+    }
+
+    if (!pinValidoFormato(pinGarcom)) {
+      throw new Error("PIN do garcom invalido. Use de 4 a 8 numeros.");
+    }
+
+    const garcom = garcomAtivoByApelidoStmt.get(codigoGarcom);
+    if (!garcom) {
+      throw new Error("Codigo do garcom nao encontrado ou inativo.");
+    }
+
+    const pinHash = hashPin(pinGarcom, garcom.pin_salt);
+    if (pinHash !== garcom.pin_hash) {
+      throw new Error("PIN do garcom incorreto.");
+    }
+
+    return normalizarNomeGarcomFechamento(garcom.nome || garcom.apelido);
+  }
+
+  const nomeLegado = normalizarNomeGarcomFechamento(
+    payload.garcom_nome_fechamento,
+    pedido?.garcom_nome_fechamento
+  );
+  if (nomeLegado) {
+    return nomeLegado;
+  }
+
+  throw new Error("Informe codigo e PIN do garcom para fechar a mesa.");
 }
 
 function formaPagamentoValida(formaInput) {
@@ -412,6 +467,48 @@ function mapaPagamentosPorPedidoIds(pedidoIds = []) {
           ? null
           : arredondar(row.valor_recebido),
       troco: arredondar(row.troco)
+    });
+  }
+
+  return mapa;
+}
+
+function mapaItensHistoricoPorPedidoIds(pedidoIds = []) {
+  const ids = Array.from(
+    new Set(
+      (pedidoIds || [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )
+  );
+  const mapa = new Map();
+  if (ids.length < 1) return mapa;
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = db
+    .prepare(`
+      SELECT
+        pedido_id,
+        produto_id,
+        nome_produto,
+        quantidade,
+        preco_unitario,
+        total_item
+      FROM itens_pedido
+      WHERE pedido_id IN (${placeholders})
+      ORDER BY id ASC
+    `)
+    .all(...ids);
+
+  for (const row of rows) {
+    const pedidoId = Number(row.pedido_id);
+    if (!mapa.has(pedidoId)) mapa.set(pedidoId, []);
+    mapa.get(pedidoId).push({
+      produto_id: Number(row.produto_id),
+      nome_produto: String(row.nome_produto || "").trim(),
+      quantidade: Number(row.quantidade || 0),
+      preco_unitario: arredondar(row.preco_unitario),
+      total_item: arredondar(row.total_item)
     });
   }
 
@@ -753,10 +850,7 @@ const fecharMesaTx = db.transaction((mesaId, payload = {}) => {
   const taxaServicoPercent = resolverTaxaPercent(payload, pedido);
   const couvertInfo = resolverCouvert(payload, pedido);
   const dividirPorPessoa = resolverDividirPorPessoa(payload, pedido);
-  const nomeGarcomFechamento = normalizarNomeGarcomFechamento(
-    payload.garcom_nome_fechamento,
-    pedido.garcom_nome_fechamento
-  );
+  const nomeGarcomFechamento = resolverGarcomFechamento(payload, pedido);
 
   recalcularPedido(pedido.id, {
     pessoas: pessoasFinal,
@@ -1102,13 +1196,17 @@ const MesaModel = {
       `)
       .all(...params);
 
-    const mapaPagamentos = mapaPagamentosPorPedidoIds(registros.map((item) => item.id));
+    const pedidoIds = registros.map((item) => item.id);
+    const mapaPagamentos = mapaPagamentosPorPedidoIds(pedidoIds);
+    const mapaItensHistorico = mapaItensHistoricoPorPedidoIds(pedidoIds);
 
     return registros.map((item) => {
       const pagamentos = mapaPagamentos.get(item.id) || pagamentosFallbackPedido(item);
+      const itens = mapaItensHistorico.get(item.id) || [];
       return {
         ...item,
-        pagamentos
+        pagamentos,
+        itens
       };
     });
   },

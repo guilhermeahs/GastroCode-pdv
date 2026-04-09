@@ -260,12 +260,12 @@ function BarChart({ titulo, data, emptyText, color = "#2e63f4", formatValue = (v
   }, [data]);
 
   return (
-    <div style={cardStyle}>
+    <div style={{ ...cardStyle, ...barChartCardStyle }}>
       <h3 style={{ marginTop: 0 }}>{titulo}</h3>
 
       {data.length === 0 && <p style={{ marginBottom: 0 }}>{emptyText}</p>}
 
-      <div style={{ display: "grid", gap: 10 }}>
+      <div style={barChartItemsStyle}>
         {data.map((item) => {
           const valor = Number(item.valor || 0);
           const largura = maxValue > 0 ? `${Math.max(6, (valor / maxValue) * 100)}%` : "0%";
@@ -2209,6 +2209,20 @@ const barTrackStyle = {
 const barFillStyle = {
   height: "100%",
   borderRadius: 999
+};
+
+const barChartCardStyle = {
+  alignSelf: "start"
+};
+
+const barChartItemsStyle = {
+  display: "grid",
+  gap: 10,
+  maxHeight: "min(52vh, 520px)",
+  overflowY: "auto",
+  overflowX: "hidden",
+  paddingRight: 4,
+  alignContent: "start"
 };
 
 function buttonStyle(disabled) {

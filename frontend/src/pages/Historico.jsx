@@ -55,6 +55,7 @@ export default function Historico() {
   const [confirmExcluirOpen, setConfirmExcluirOpen] = useState(false);
   const [registroExcluir, setRegistroExcluir] = useState(null);
   const [pinSeguranca, setPinSeguranca] = useState("");
+  const [detalheAbertoId, setDetalheAbertoId] = useState(null);
   const [dataInicio, setDataInicio] = useState(() => filtroHistoricoPeriodo?.data_inicio || "");
   const [dataFim, setDataFim] = useState(() => filtroHistoricoPeriodo?.data_fim || "");
   const [quantidadeRenderizada, setQuantidadeRenderizada] = useState(HISTORICO_INICIAL);
@@ -136,10 +137,23 @@ export default function Historico() {
     return filtrado.slice(0, quantidadeRenderizada);
   }, [filtrado, quantidadeRenderizada]);
 
+  const detalheHistorico = useMemo(() => {
+    if (!detalheAbertoId) return null;
+    return historico.find((item) => Number(item.id) === Number(detalheAbertoId)) || null;
+  }, [historico, detalheAbertoId]);
+
   function abrirConfirmExcluir(item) {
     setRegistroExcluir(item);
     setPinSeguranca("");
     setConfirmExcluirOpen(true);
+  }
+
+  function abrirDetalhes(item) {
+    setDetalheAbertoId(item?.id || null);
+  }
+
+  function fecharDetalhes() {
+    setDetalheAbertoId(null);
   }
 
   async function confirmarExcluirHistorico() {
@@ -316,6 +330,14 @@ export default function Historico() {
             </button>
 
             <button
+              onClick={() => abrirDetalhes(item)}
+              style={detailButtonStyle(loading)}
+              disabled={loading}
+            >
+              Ver detalhes
+            </button>
+
+            <button
               onClick={() => abrirConfirmExcluir(item)}
               style={dangerButtonStyle(loading)}
               disabled={loading}
@@ -347,6 +369,105 @@ export default function Historico() {
           </button>
         )}
       </div>
+
+      {detalheHistorico && (
+        <div style={modalOverlayStyle} onMouseDown={fecharDetalhes}>
+          <div
+            style={modalCardStyle}
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <div style={modalHeaderStyle}>
+              <h3 style={{ margin: 0, fontSize: 26, fontWeight: 800 }}>
+                Detalhes da Mesa {detalheHistorico.mesa_numero}
+              </h3>
+              <button type="button" style={secondaryButtonStyle(false)} onClick={fecharDetalhes}>
+                Fechar
+              </button>
+            </div>
+
+            <div style={modalInfoGridStyle}>
+              <div style={modalInfoCardStyle}>
+                <small style={labelStyle}>Fechado em</small>
+                <strong>{formatDateTimePtBr(detalheHistorico.closed_at)}</strong>
+              </div>
+
+              <div style={modalInfoCardStyle}>
+                <small style={labelStyle}>Pagamento</small>
+                <strong>{resumoPagamentos(detalheHistorico.pagamentos)}</strong>
+              </div>
+
+              <div style={modalInfoCardStyle}>
+                <small style={labelStyle}>Garcom no fechamento</small>
+                <strong>{detalheHistorico.garcom_nome_fechamento || "Nao informado"}</strong>
+              </div>
+
+              <div style={modalInfoCardStyle}>
+                <small style={labelStyle}>Pessoas</small>
+                <strong>{detalheHistorico.pessoas}</strong>
+              </div>
+            </div>
+
+            <div style={modalSectionStyle}>
+              <h4 style={modalTitleStyle}>Itens da conta</h4>
+              {Array.isArray(detalheHistorico.itens) && detalheHistorico.itens.length > 0 ? (
+                <div style={itensGridStyle}>
+                  {detalheHistorico.itens.map((item, index) => (
+                    <div key={`${detalheHistorico.id}-${index}`} style={itemCardStyle}>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <strong>{item.nome_produto || "Item"}</strong>
+                        <small style={labelStyle}>{Number(item.quantidade || 0)}x</small>
+                      </div>
+                      <div style={{ textAlign: "right", display: "grid", gap: 2 }}>
+                        <small style={labelStyle}>{moeda(item.preco_unitario)} un.</small>
+                        <strong>{moeda(item.total_item)}</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={mensagemVaziaStyle}>Nenhum item encontrado para essa conta.</div>
+              )}
+            </div>
+
+            {Array.isArray(detalheHistorico.pagamentos) && detalheHistorico.pagamentos.length > 0 && (
+              <div style={modalSectionStyle}>
+                <h4 style={modalTitleStyle}>Pagamentos</h4>
+                <div style={itensGridStyle}>
+                  {detalheHistorico.pagamentos.map((pagamento, index) => (
+                    <div key={`${detalheHistorico.id}-pag-${index}`} style={itemCardStyle}>
+                      <span>{nomeFormaPagamento(pagamento.forma_pagamento)}</span>
+                      <strong>{moeda(pagamento.valor)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={totaisGridStyle}>
+              <div style={modalInfoCardStyle}>
+                <small style={labelStyle}>Subtotal</small>
+                <strong>{moeda(detalheHistorico.subtotal)}</strong>
+              </div>
+              <div style={modalInfoCardStyle}>
+                <small style={labelStyle}>Taxa de servico ({Number(detalheHistorico.taxa_servico_percent || 0)}%)</small>
+                <strong>{moeda(detalheHistorico.taxa_servico_valor)}</strong>
+              </div>
+              {Number(detalheHistorico.couvert_artistico_total || 0) > 0 && (
+                <div style={modalInfoCardStyle}>
+                  <small style={labelStyle}>Couvert artistico</small>
+                  <strong>{moeda(detalheHistorico.couvert_artistico_total)}</strong>
+                </div>
+              )}
+              <div style={modalInfoCardStyle}>
+                <small style={labelStyle}>Total</small>
+                <strong style={{ fontSize: 22 }}>{moeda(detalheHistorico.total)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmExcluirOpen}
@@ -526,3 +647,103 @@ function dangerButtonStyle(disabled) {
     fontWeight: 700
   };
 }
+
+function detailButtonStyle(disabled) {
+  return {
+    marginLeft: 8,
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid #3857a4",
+    background: disabled ? "#2a355c" : "#1a2d60",
+    color: "#ffffff",
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontWeight: 700
+  };
+}
+
+const modalOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(5, 8, 20, 0.78)",
+  display: "grid",
+  placeItems: "center",
+  padding: 16,
+  zIndex: 150
+};
+
+const modalCardStyle = {
+  width: "min(980px, calc(100vw - 24px))",
+  maxHeight: "calc(100vh - 24px)",
+  overflow: "auto",
+  borderRadius: 18,
+  border: "1px solid #2e427e",
+  background: "#141d39",
+  padding: 14,
+  boxShadow: "0 20px 42px rgba(0, 0, 0, 0.48)",
+  display: "grid",
+  gap: 12
+};
+
+const modalHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8
+};
+
+const modalInfoGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+  gap: 8
+};
+
+const modalInfoCardStyle = {
+  border: "1px solid #2d3f73",
+  borderRadius: 12,
+  padding: "10px 12px",
+  background: "#111a34",
+  display: "grid",
+  gap: 4
+};
+
+const modalSectionStyle = {
+  border: "1px solid #2d3f73",
+  borderRadius: 12,
+  padding: 12,
+  background: "#101932",
+  display: "grid",
+  gap: 8
+};
+
+const modalTitleStyle = {
+  margin: 0,
+  fontSize: 22,
+  fontWeight: 800
+};
+
+const itensGridStyle = {
+  display: "grid",
+  gap: 8
+};
+
+const itemCardStyle = {
+  border: "1px solid #2d3f73",
+  borderRadius: 10,
+  background: "#121d3a",
+  padding: "9px 10px",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 10
+};
+
+const mensagemVaziaStyle = {
+  color: "#a9b0cf",
+  fontSize: 14
+};
+
+const totaisGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+  gap: 8
+};

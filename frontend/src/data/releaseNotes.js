@@ -1,4 +1,17 @@
 const RELEASE_NOTES_BY_VERSION = {
+  "1.0.20": [
+    "Entregas/iFood: pedido agendado agora aparece como Agendado com janela correta (inicio/fim).",
+    "Entregas/iFood: bloqueio de despacho antes da hora do agendamento para evitar envio fora da janela.",
+    "Entregas: envio em lote agora separa pedidos agendados e mostra quantos ficaram aguardando horario.",
+    "Pedidos manuais: regra de duplicidade ajustada para 20 minutos, evitando falso positivo em outro dia/madrugada.",
+    "Pedidos manuais: comparacao de dia corrigida para usar data local e nao UTC."
+  ],
+  "1.0.19": [
+    "Entregas: removida duplicidade visual de cancelamento no detalhe do pedido quando o status ja indica cancelado.",
+    "Entregas: novo campo Troco necessario no resumo financeiro para mostrar quanto deve ser devolvido ao cliente.",
+    "Configuracoes: nova opcao para exigir ou desativar PIN do garcom no envio da mesa para fechamento.",
+    "Financeiro: cards de Faturamento por dia e Top categorias agora usam altura maxima com rolagem interna."
+  ],
   "1.0.16": [
     "Nova aba dedicada de Relatorios na topbar, separada da tela Financeiro.",
     "Relatorio gerencial completo com filtro por periodo personalizado (data inicial e final).",

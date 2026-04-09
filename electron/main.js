@@ -10,6 +10,7 @@ const API_HEALTH_URL = `http://127.0.0.1:${PORT}/api/health`;
 const UPDATER_FEED_URL = String(process.env.APPGESTAO_UPDATE_URL || "").trim();
 const APPGESTAO_DISABLE_UPDATER = String(process.env.APPGESTAO_DISABLE_UPDATER || "0").trim() === "1";
 const APPGESTAO_NATIVE_TOPBAR = String(process.env.APPGESTAO_NATIVE_TOPBAR || "0").trim() === "1";
+const APPGESTAO_CUSTOM_TOPBAR = String(process.env.APPGESTAO_CUSTOM_TOPBAR || "1").trim() === "1";
 const APPGESTAO_COMPENSAR_ESCALA = String(process.env.APPGESTAO_COMPENSAR_ESCALA || "1").trim() === "1";
 const APP_UPDATE_YML_PATH = path.join(process.resourcesPath, "app-update.yml");
 const UPDATE_URL_PADRAO_PLACEHOLDER = "https://example.com/appgestaoloja/updates";
@@ -260,15 +261,26 @@ function criarJanelaPrincipal() {
   };
 
   let win = null;
-  if (isWindows && APPGESTAO_NATIVE_TOPBAR) {
+  if (isWindows && APPGESTAO_CUSTOM_TOPBAR) {
+    try {
+      win = new BrowserWindow({
+        ...baseOptions,
+        frame: false
+      });
+      logMainInfo("Janela criada com topbar customizada.");
+    } catch (error) {
+      logMainError("Falha ao criar janela com topbar customizada. Tentando modo seguro.", error);
+      win = new BrowserWindow(baseOptions);
+    }
+  } else if (isWindows && APPGESTAO_NATIVE_TOPBAR) {
     try {
       win = new BrowserWindow({
         ...baseOptions,
         titleBarStyle: "hidden",
         titleBarOverlay: {
-          color: "#0f1530",
+          color: "#0b1021",
           symbolColor: "#f4f7ff",
-          height: 38
+          height: 34
         }
       });
       logMainInfo("Janela criada com barra nativa personalizada.");
@@ -331,6 +343,9 @@ function criarJanelaPrincipal() {
     }
     logMainInfo("Renderer principal carregado com sucesso.");
     atualizarEstadoUpdater({});
+    try {
+      win.webContents.send("window:maximized", win.isMaximized());
+    } catch {}
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -355,6 +370,16 @@ function criarJanelaPrincipal() {
   win.webContents.on("did-fail-load", (_event, code, description, validatedURL) => {
     logMainError(`did-fail-load (${code}) ${description} | ${validatedURL || "sem URL"}`);
   });
+
+  const notificarEstadoMaximizacao = () => {
+    try {
+      win.webContents.send("window:maximized", win.isMaximized());
+    } catch {}
+  };
+  win.on("maximize", notificarEstadoMaximizacao);
+  win.on("unmaximize", notificarEstadoMaximizacao);
+  win.on("enter-full-screen", notificarEstadoMaximizacao);
+  win.on("leave-full-screen", notificarEstadoMaximizacao);
 
   win.on("closed", () => {
     logMainInfo("Janela principal fechada.");
@@ -639,6 +664,34 @@ app.whenReady().then(async () => {
     ok: backendStarted,
     erro: backendBootError || ""
   }));
+
+  ipcMain.handle("window:minimize", (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return false;
+    target.minimize();
+    return true;
+  });
+  ipcMain.handle("window:toggle-maximize", (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return false;
+    if (target.isMaximized()) {
+      target.unmaximize();
+    } else {
+      target.maximize();
+    }
+    return target.isMaximized();
+  });
+  ipcMain.handle("window:is-maximized", (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return false;
+    return target.isMaximized();
+  });
+  ipcMain.handle("window:close", (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return false;
+    target.close();
+    return true;
+  });
 });
 
 process.on("uncaughtException", (error) => {

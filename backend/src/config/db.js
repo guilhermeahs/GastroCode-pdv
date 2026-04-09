@@ -237,8 +237,12 @@ db.exec(`
     FOREIGN KEY (motoboy_id) REFERENCES motoboys(id) ON DELETE CASCADE
   );
 
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_motoboy_pedido_unico_numero
+  CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_numero
     ON motoboy_pedidos(motoboy_id, numero);
+  CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_source_numero_data
+    ON motoboy_pedidos(source, numero, data_iso);
+  CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_source_external
+    ON motoboy_pedidos(source, external_id);
   CREATE INDEX IF NOT EXISTS idx_motoboy_pedidos_data
     ON motoboy_pedidos(data_iso);
   CREATE INDEX IF NOT EXISTS idx_motoboys_nome
@@ -272,6 +276,9 @@ function ensureMotoboyPedidosAllowsNullMotoboy() {
 
   db.exec(`
     DROP INDEX IF EXISTS idx_motoboy_pedido_unico_numero;
+    DROP INDEX IF EXISTS idx_motoboy_pedido_numero;
+    DROP INDEX IF EXISTS idx_motoboy_pedido_source_numero_data;
+    DROP INDEX IF EXISTS idx_motoboy_pedido_source_external;
     DROP INDEX IF EXISTS idx_motoboy_pedidos_data;
 
     ALTER TABLE motoboy_pedidos RENAME TO motoboy_pedidos_old;
@@ -308,10 +315,27 @@ function ensureMotoboyPedidosAllowsNullMotoboy() {
 
     DROP TABLE motoboy_pedidos_old;
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_motoboy_pedido_unico_numero
+    CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_numero
       ON motoboy_pedidos(motoboy_id, numero);
+    CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_source_numero_data
+      ON motoboy_pedidos(source, numero, data_iso);
+    CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_source_external
+      ON motoboy_pedidos(source, external_id);
     CREATE INDEX IF NOT EXISTS idx_motoboy_pedidos_data
       ON motoboy_pedidos(data_iso);
+  `);
+}
+
+function ensureMotoboyPedidoIndexes() {
+  db.exec(`
+    DROP INDEX IF EXISTS idx_motoboy_pedido_unico_numero;
+    DROP INDEX IF EXISTS idx_motoboy_pedido_unico_dia_source_numero;
+    CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_numero
+      ON motoboy_pedidos(motoboy_id, numero);
+    CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_source_numero_data
+      ON motoboy_pedidos(source, numero, data_iso);
+    CREATE INDEX IF NOT EXISTS idx_motoboy_pedido_source_external
+      ON motoboy_pedidos(source, external_id);
   `);
 }
 
@@ -319,6 +343,7 @@ ensureMotoboyPedidosAllowsNullMotoboy();
 ensureColumn("motoboy_pedidos", "external_id", "TEXT");
 ensureColumn("motoboy_pedidos", "status", "TEXT NOT NULL DEFAULT 'RECEBIDO'");
 ensureColumn("motoboy_pedidos", "detalhes_json", "TEXT");
+ensureMotoboyPedidoIndexes();
 
 if (!desabilitarSeedExemplo) {
 const totalMesas = db.prepare("SELECT COUNT(*) AS total FROM mesas").get().total;

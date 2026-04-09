@@ -2,6 +2,21 @@
 
 Todas as mudancas importantes do app ficam registradas aqui.
 
+## [1.0.20] - 2026-04-09
+
+- Entregas/iFood: pedidos agendados agora exibem status "Agendado" com janela correta de atendimento (inicio/fim).
+- Entregas/iFood: bloqueio de despacho antes do horario da janela do pedido agendado (botao fica em "Aguardando horario").
+- Entregas: envio em lote passou a ignorar pedidos agendados fora da janela e informar no resumo quantos ficaram aguardando horario.
+- Pedidos manuais: regra de duplicidade ajustada para evitar falso positivo em outro dia/madrugada (usa janela curta de 20 minutos).
+- Pedidos manuais: comparacao de "mesmo dia" agora usa data local para evitar conflito por diferenca UTC.
+
+## [1.0.19] - 2026-04-05
+
+- Entregas: removida duplicidade visual de cancelamento no detalhe do pedido (nao repete quando o status ja informa cancelado).
+- Entregas: adicionado campo "Troco necessario" no resumo financeiro do pedido (valor que falta devolver ao cliente).
+- Configuracoes: nova opcao para exigir/desativar PIN do garcom ao enviar mesa para fechamento de conta.
+- Financeiro: cards "Faturamento por dia" e "Top categorias" com altura maxima e rolagem interna para evitar tela excessivamente longa.
+
 ## [1.0.18] - 2026-04-03
 
 - Correcao no card de pedidos online para nao duplicar selo de cancelamento (mostra apenas um "Cancelado").
